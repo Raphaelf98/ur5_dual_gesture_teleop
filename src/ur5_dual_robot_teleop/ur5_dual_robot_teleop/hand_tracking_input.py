@@ -1,75 +1,68 @@
 #!/usr/bin/env python3
 """
-Hand Tracking Input Handler
-=============================
-Subscribes to /hand_pose/right and converts normalized hand position
-to robot velocity commands via workspace mapping.
+Hand Tracking Input Handler — Phase 2
+========================================
+Subscribes to hand tracker topics and converts to robot commands.
 
-Replaces keyboard_input.py — same get_input() -> Pose2D interface.
-Drop-in replacement, no changes needed in teleop_node.py.
+Gesture → Robot behavior:
+  OPEN   → zero velocity (robot stops)
+  FOLLOW → velocity from hand position (robot follows)
+  GRIP   → velocity from hand position + gripper open command
 
-Workspace mapping:
-    hand x (normalized 0-1) → robot velocity vx
-    hand y (normalized 0-1) → robot velocity vy
-
-The hand position is mapped relative to a "neutral zone" at center (0.5, 0.5).
-Moving hand away from center produces proportional velocity.
+Dead zone around neutral position prevents drift when hand is still.
 """
 
-import rclpy
+import threading
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
-from std_msgs.msg import Bool
-import threading
+from std_msgs.msg import Bool, Float64, String
 
 from ur5_dual_robot_teleop.controllers.base_controller import Pose2D
 
 
-# ─── Workspace mapping parameters ───────────────────────────────────────────
-DEAD_ZONE     = 0.08    # normalized — hand movement inside this radius = no motion
-MAX_ZONE      = 0.35    # normalized — hand movement beyond this = max velocity
-MAX_VELOCITY  = 0.3     # m/s — maximum robot velocity
+# ─── Workspace mapping ───────────────────────────────────────────────────────
+NEUTRAL_X    = 0.5     # normalized center X
+NEUTRAL_Y    = 0.5     # normalized center Y
+DEAD_ZONE    = 0.08    # hand movement inside this radius = no motion
+MAX_ZONE     = 0.35    # hand movement beyond this = max velocity
+MAX_VELOCITY = 0.25    # m/s — maximum robot velocity
 
 
 class HandTrackingInput:
     """
-    Hand tracking input handler.
+    Hand tracking input handler with gesture support.
 
-    Converts normalized hand pose from /hand_pose/right
-    to Pose2D velocity setpoints for the direct velocity controller.
-
-    The hand position relative to center (0.5, 0.5) is mapped to velocity:
-    - Inside dead zone: zero velocity (stable holding position)
-    - Outside dead zone: proportional velocity
-    - Beyond max zone: maximum velocity (clamped)
-
-    Usage:
-        input_handler = HandTrackingInput(node)
-        input_handler.start()
-        pose = input_handler.get_input()  # same interface as KeyboardInput
+    Converts /hand_pose/right + /hand_tracker/gesture to velocity commands.
+    Only outputs velocity when gesture is FOLLOW or GRIP.
     """
 
     def __init__(self, node: Node):
-        self._node   = node
-        self._lock   = threading.Lock()
-        self._active = False
-        self._pose   = Pose2D()   # current smoothed hand pose (normalized)
+        self._node    = node
+        self._lock    = threading.Lock()
         self._running = True
 
+        # Current state
+        self._pose    = Pose2D()
+        self._gesture = 'OPEN'
+        self._gripper = 0.0   # 0.0 = closed, 1.0 = open
+
         # Subscribers
-        self._pose_sub = node.create_subscription(
+        node.create_subscription(
             PoseStamped, '/hand_pose/right',
             self._pose_callback, 10)
-        self._active_sub = node.create_subscription(
-            Bool, '/hand_tracker/active',
-            self._active_callback, 10)
+        node.create_subscription(
+            String, '/hand_tracker/gesture',
+            self._gesture_callback, 10)
+        node.create_subscription(
+            Float64, '/hand_tracker/gripper',
+            self._gripper_callback, 10)
 
     def start(self):
-        """No background thread needed — uses ROS callbacks."""
         self._node.get_logger().info('Hand tracking input ready.')
         self._node.get_logger().info(
-            f'Dead zone: {DEAD_ZONE:.2f}  Max zone: {MAX_ZONE:.2f}  '
-            f'Max vel: {MAX_VELOCITY:.2f} m/s')
+            f'OPEN=stop | FOLLOW=track | GRIP=track+gripper')
+        self._node.get_logger().info(
+            f'Dead zone: {DEAD_ZONE:.2f}  Max vel: {MAX_VELOCITY:.2f} m/s')
 
     def stop(self):
         self._running = False
@@ -80,34 +73,46 @@ class HandTrackingInput:
 
     def get_input(self) -> Pose2D:
         """
-        Convert hand position to velocity setpoint.
-        Returns Pose2D where x/y are velocity commands [-MAX_VELOCITY, MAX_VELOCITY].
+        Returns velocity setpoint based on hand position and gesture.
+        Returns zero if gesture is OPEN or hand not detected.
         """
         with self._lock:
-            if not self._active:
-                return Pose2D()  # zero velocity when hand not tracked
+            gesture = self._gesture
+            pose    = self._pose
 
-            # Hand position relative to center
-            dx = self._pose.x - 0.5   # range [-0.5, 0.5]
-            dy = self._pose.y - 0.5
+        # Only move if fist is closed
+        if gesture == 'OPEN':
+            return Pose2D()
 
-        # Apply dead zone
-        vx = self._apply_dead_zone(dx)
-        vy = self._apply_dead_zone(dy)
+        # Hand displacement from neutral
+        dx = pose.x - NEUTRAL_X
+        dy = pose.y - NEUTRAL_Y
 
-        # Scale to velocity
-        scale = MAX_VELOCITY / (MAX_ZONE - DEAD_ZONE)
-        vx = max(-MAX_VELOCITY, min(MAX_VELOCITY, vx * scale))
-        vy = max(-MAX_VELOCITY, min(MAX_VELOCITY, vy * scale))
+        # Apply dead zone and scale
+        vx = self._scale(dx)
+        vy = self._scale(dy)
 
         return Pose2D(x=vx, y=vy, yaw=0.0)
 
-    def _apply_dead_zone(self, value: float) -> float:
-        """Apply dead zone to a single axis value."""
+    def get_gripper_command(self) -> float:
+        """Returns gripper command: 0.0=closed, 1.0=open."""
+        with self._lock:
+            return self._gripper
+
+    def get_gesture(self) -> str:
+        """Returns current gesture: OPEN, FOLLOW, GRIP."""
+        with self._lock:
+            return self._gesture
+
+    def _scale(self, value: float) -> float:
+        """Apply dead zone and scale to velocity."""
         if abs(value) < DEAD_ZONE:
             return 0.0
-        sign = 1.0 if value > 0 else -1.0
-        return sign * (abs(value) - DEAD_ZONE)
+        sign  = 1.0 if value > 0 else -1.0
+        scale = MAX_VELOCITY / (MAX_ZONE - DEAD_ZONE)
+        return max(-MAX_VELOCITY,
+               min(MAX_VELOCITY,
+                   sign * (abs(value) - DEAD_ZONE) * scale))
 
     def _pose_callback(self, msg: PoseStamped):
         with self._lock:
@@ -117,8 +122,10 @@ class HandTrackingInput:
                 yaw=0.0
             )
 
-    def _active_callback(self, msg: Bool):
+    def _gesture_callback(self, msg: String):
         with self._lock:
-            self._active = msg.data
-            if not msg.data:
-                self._pose = Pose2D()  # reset when hand lost
+            self._gesture = msg.data
+
+    def _gripper_callback(self, msg: Float64):
+        with self._lock:
+            self._gripper = msg.data
