@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
         'dual_arm_teleop_node = ur5_dual_robot_teleop.dual_arm_teleop_node:main',
+        'keyboard_teleop_node = ur5_dual_robot_teleop.dual_arm_keyboard_node:main',
         ],
     },
 )
