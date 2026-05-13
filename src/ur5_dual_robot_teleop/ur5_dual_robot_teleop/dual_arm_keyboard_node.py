@@ -1,206 +1,105 @@
 #!/usr/bin/env python3
 """
-Keyboard Teleop Node — Direct Velocity Control in XY Plane
-============================================================
-Controls both UR5 arms simultaneously in the XY plane using arrow keys.
-Uses MoveIt Servo for real-time Cartesian velocity streaming.
+Keyboard Input Handler
+=======================
+Reads keyboard input and produces target poses or velocity setpoints.
+Completely separated from the controller — swap this for hand_tracking_input.py
+when ready for hand tracking.
 
-Controls:
-    ↑  (UP)     — move both arms +X
-    ↓  (DOWN)   — move both arms -X
-    ←  (LEFT)   — move both arms +Y
-    →  (RIGHT)  — move both arms -Y
-    Q           — rotate wrist CCW (+Z)
-    E           — rotate wrist CW  (-Z)
-    SPACE       — stop
-    ESC / CTRL+C — quit
-
-Requirements:
-    pip install pynput
+In DirectVelocity mode: target.x/y/yaw = velocity setpoints
+In PD/Position mode:    target.x/y/yaw = incremental position updates
 """
 
-import rclpy
-from rclpy.node import Node
-from geometry_msgs.msg import TwistStamped
-from std_srvs.srv import Trigger
-
+import threading
+from ur5_dual_robot_teleop.controllers.base_controller import Pose2D
 try:
     from pynput import keyboard
 except ImportError:
-    print("ERROR: pynput not installed. Run: pip install pynput")
-    exit(1)
-
-import time
-import threading
+    raise ImportError("Install pynput: pip install pynput")
 
 
-# ─── Velocity settings ───────────────────────────────────────────────────────
-LINEAR_SPEED  = 0.15   # m/s  — XY translation speed
-ANGULAR_SPEED = 0.5    # rad/s — wrist rotation speed
-PUBLISH_RATE  = 50     # Hz
+class KeyboardInput:
+    """
+    Keyboard input handler.
 
+    Produces a Pose2D that represents either:
+    - A velocity setpoint (for DirectVelocityController)
+    - A position delta to apply to current target (for PD/Position controllers)
 
-class KeyboardTeleopNode(Node):
+    Keys:
+        ↑ / ↓   — X axis
+        ← / →   — Y axis
+        Q / E   — Wrist yaw
+        SPACE   — Stop / zero all
+        ESC     — Signal quit
+    """
 
-    def __init__(self):
-        super().__init__('keyboard_teleop_node')
+    def __init__(
+        self,
+        linear_speed:  float = 0.3,    # m/s or m/step
+        angular_speed: float = 0.5,    # rad/s or rad/step
+    ):
+        self.linear_speed  = linear_speed
+        self.angular_speed = angular_speed
 
-        # Publishers
-        self.left_pub = self.create_publisher(
-            TwistStamped, '/left_servo_node/delta_twist_cmds', 10)
-        self.right_pub = self.create_publisher(
-            TwistStamped, '/right_servo_node/delta_twist_cmds', 10)
+        self._active_keys: set = set()
+        self._lock    = threading.Lock()
+        self._running = True
+        self._listener = None
 
-        # Servo service clients
-        self.left_start  = self.create_client(Trigger, '/left_servo_node/start_servo')
-        self.right_start = self.create_client(Trigger, '/right_servo_node/start_servo')
-
-        # Current velocity state
-        self.vx  = 0.0   # linear X
-        self.vy  = 0.0   # linear Y
-        self.wz  = 0.0   # angular Z (wrist)
-        self._lock = threading.Lock()
-
-        # Active keys set
-        self._active_keys = set()
-
-        self.running = True
-
-        self.get_logger().info('Keyboard teleop node started.')
-        self.get_logger().info('Starting servo nodes...')
-
-        # Start servo after short delay
-        self.startup_timer = self.create_timer(2.0, self.startup)
-
-    def startup(self):
-        self.startup_timer.cancel()
-        self._call_service(self.left_start,  '/left_servo_node/start_servo')
-        self._call_service(self.right_start, '/right_servo_node/start_servo')
-
-        self.get_logger().info('')
-        self.get_logger().info('═══════════════════════════════════════')
-        self.get_logger().info('  KEYBOARD TELEOP — XY Plane Control  ')
-        self.get_logger().info('═══════════════════════════════════════')
-        self.get_logger().info('  ↑        Move +X (forward)          ')
-        self.get_logger().info('  ↓        Move -X (backward)         ')
-        self.get_logger().info('  ←        Move +Y (left)             ')
-        self.get_logger().info('  →        Move -Y (right)            ')
-        self.get_logger().info('  Q        Rotate wrist CCW (+Z)      ')
-        self.get_logger().info('  E        Rotate wrist CW  (-Z)      ')
-        self.get_logger().info('  SPACE    Stop                        ')
-        self.get_logger().info('  ESC      Quit                        ')
-        self.get_logger().info('═══════════════════════════════════════')
-        self.get_logger().info('')
-
-        # Start keyboard listener in background thread
-        self._kb_thread = threading.Thread(target=self._start_keyboard, daemon=True)
-        self._kb_thread.start()
-
-        # Start publish timer
-        self._pub_timer = self.create_timer(1.0 / PUBLISH_RATE, self._publish)
-
-    def _call_service(self, client, name):
-        if not client.wait_for_service(timeout_sec=3.0):
-            self.get_logger().warn(f'Service {name} not available')
-            return
-        future = client.call_async(Trigger.Request())
-        rclpy.spin_until_future_complete(self, future, timeout_sec=3.0)
-        if future.result() and future.result().success:
-            self.get_logger().info(f'{name}: OK')
-
-    def _start_keyboard(self):
-        """Run keyboard listener in background thread."""
-        with keyboard.Listener(
+    def start(self):
+        """Start keyboard listener in background thread."""
+        self._listener = keyboard.Listener(
             on_press=self._on_press,
             on_release=self._on_release
-        ) as listener:
-            listener.join()
+        )
+        self._listener.start()
+
+    def stop(self):
+        """Stop keyboard listener."""
+        self._running = False
+        if self._listener:
+            self._listener.stop()
+
+    @property
+    def should_quit(self) -> bool:
+        return not self._running
+
+    def get_input(self) -> Pose2D:
+        """
+        Get current input as a Pose2D.
+        Returns zero if no keys pressed.
+        """
+        with self._lock:
+            keys = set(self._active_keys)
+
+        x   = 0.0
+        y   = 0.0
+        yaw = 0.0
+
+        for key in keys:
+            if key == keyboard.Key.up:
+                x += self.linear_speed
+            elif key == keyboard.Key.down:
+                x -= self.linear_speed
+            elif key == keyboard.Key.left:
+                y += self.linear_speed
+            elif key == keyboard.Key.right:
+                y -= self.linear_speed
+            elif hasattr(key, 'char') and key.char in ('q', 'Q'):
+                yaw += self.angular_speed
+            elif hasattr(key, 'char') and key.char in ('e', 'E'):
+                yaw -= self.angular_speed
+
+        return Pose2D(x=x, y=y, yaw=yaw)
 
     def _on_press(self, key):
         with self._lock:
             self._active_keys.add(key)
-            self._update_velocity()
+        if key == keyboard.Key.esc:
+            self._running = False
+            return False
 
     def _on_release(self, key):
         with self._lock:
             self._active_keys.discard(key)
-            self._update_velocity()
-
-        # Quit on ESC
-        if key == keyboard.Key.esc:
-            self.running = False
-            return False
-
-    def _update_velocity(self):
-        """Recompute velocity based on currently pressed keys."""
-        vx = 0.0
-        vy = 0.0
-        wz = 0.0
-
-        for key in self._active_keys:
-            if key == keyboard.Key.up:
-                vx += LINEAR_SPEED
-            elif key == keyboard.Key.down:
-                vx -= LINEAR_SPEED
-            elif key == keyboard.Key.left:
-                vy += LINEAR_SPEED
-            elif key == keyboard.Key.right:
-                vy -= LINEAR_SPEED
-            elif hasattr(key, 'char'):
-                if key.char == 'q' or key.char == 'Q':
-                    wz += ANGULAR_SPEED
-                elif key.char == 'e' or key.char == 'E':
-                    wz -= ANGULAR_SPEED
-                elif key.char == ' ':
-                    vx = 0.0
-                    vy = 0.0
-                    wz = 0.0
-
-        self.vx = vx
-        self.vy = vy
-        self.wz = wz
-
-    def _make_twist(self, vx, vy, wz):
-        msg = TwistStamped()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'world'
-        msg.twist.linear.x  = float(vx)
-        msg.twist.linear.y  = float(vy)
-        msg.twist.linear.z  = 0.0
-        msg.twist.angular.x = 0.0
-        msg.twist.angular.y = 0.0
-        msg.twist.angular.z = float(wz)
-        return msg
-
-    def _publish(self):
-        with self._lock:
-            vx = self.vx
-            vy = self.vy
-            wz = self.wz
-
-        left_msg  = self._make_twist(vx, vy, wz)
-        right_msg = self._make_twist(-vx, -vy, wz)  # flip for right arm
-
-        self.left_pub.publish(left_msg)
-        self.right_pub.publish(right_msg)
-
-
-def main(args=None):
-    rclpy.init(args=args)
-    node = KeyboardTeleopNode()
-
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        # Send stop command before shutting down
-        stop = node._make_twist(0.0, 0.0, 0.0)
-        node.left_pub.publish(stop)
-        node.right_pub.publish(stop)
-        node.destroy_node()
-        rclpy.shutdown()
-
-
-if __name__ == '__main__':
-    main()
