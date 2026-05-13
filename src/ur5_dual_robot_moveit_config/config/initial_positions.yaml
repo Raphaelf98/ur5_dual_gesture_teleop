@@ -1,0 +1,13 @@
+initial_positions:
+  left_shoulder_pan_joint: 0.0
+  left_shoulder_lift_joint: -1.57
+  left_elbow_joint: 1.57
+  left_wrist_1_joint: -1.57
+  left_wrist_2_joint: -1.57
+  left_wrist_3_joint: 0.0
+  right_shoulder_pan_joint: 3.14
+  right_shoulder_lift_joint: -1.57
+  right_elbow_joint: 1.57
+  right_wrist_1_joint: -1.57
+  right_wrist_2_joint: -1.57
+  right_wrist_3_joint: 0.0
