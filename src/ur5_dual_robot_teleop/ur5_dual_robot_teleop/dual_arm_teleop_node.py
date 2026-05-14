@@ -45,7 +45,7 @@ CONTROLLERS = {
         max_angular=0.8
     ),
     'p': lambda: PDController(
-        kp_linear=2.5, kd_linear=0.0,
+        kp_linear=5.0, kd_linear=0.0,
         kp_angular=2.5, kd_angular=0.0,
         max_linear=0.3, max_angular=0.5
     ),
@@ -132,9 +132,10 @@ class TeleopNode(Node):
         self._lock         = threading.Lock()
 
         # ── Position tracking state (hand tracking only) ───────────────────
-        self._left_ref_eef  = Pose2D()   # EEF pose at fist-close
-        self._right_ref_eef = Pose2D()
-        self._was_active    = False       # previous active state for rising-edge detect
+        self._left_ref_eef      = Pose2D()   # EEF pose at left fist-close
+        self._right_ref_eef     = Pose2D()   # EEF pose at right fist-close
+        self._left_was_active   = False      # rising-edge detect per arm
+        self._right_was_active  = False
 
         # ── Parameter change callback (runtime controller switching) ──────
         self.add_on_set_parameters_callback(self._on_param_change)
@@ -272,55 +273,70 @@ class TeleopNode(Node):
         """
         Position tracking step for hand tracking mode.
 
-        Inactive (fist open): publish zero velocity, reset controllers.
-        Rising edge (fist just closed): snapshot EEF positions as references.
-        Active (fist held): target = ref_eef + offset, P drives EEF to target.
-        Each arm has its own offset — ready for dual hand tracking.
+        Each arm is handled independently:
+          Inactive (fist open)   → zero velocity, reset controller.
+          Rising edge (fist just closed) → snapshot EEF as reference origin.
+          Active (fist held)     → target = ref_eef + offset, P drives EEF.
         """
-        active = self.input.is_active
+        left_active  = getattr(self.input, 'left_active',  self.input.is_active)
+        right_active = getattr(self.input, 'right_active', self.input.is_active)
+        stamp = self.get_clock().now().to_msg()
 
-        # Inactive — stop and reset so next activation starts clean.
-        if not active:
-            if self._was_active:
+        left_target = right_target = None
+
+        # ── Left arm ──────────────────────────────────────────────────────
+        if not left_active:
+            if self._left_was_active:
                 self.left_controller.reset()
-                self.right_controller.reset()
-            self._was_active = False
+            self._left_was_active = False
             stop = TwistStamped()
-            stop.header.stamp    = self.get_clock().now().to_msg()
+            stop.header.stamp    = stamp
             stop.header.frame_id = self.world_frame
             self.left_pub.publish(stop)
+        else:
+            if not self._left_was_active:
+                self.left_controller.reset()
+                left_raw = self._get_eef_pose(self.left_frame)
+                lx, ly   = WORKSPACE.clamp(left_raw.x, left_raw.y)
+                self._left_ref_eef = Pose2D(x=lx, y=ly, yaw=left_raw.yaw)
+            self._left_was_active = True
+            lx, ly = WORKSPACE.clamp(
+                self._left_ref_eef.x + left_offset.x,
+                self._left_ref_eef.y + left_offset.y)
+            left_target  = Pose2D(x=lx, y=ly, yaw=self._left_ref_eef.yaw + left_offset.yaw)
+            left_current = self._get_eef_pose(self.left_frame)
+            left_vel     = self.left_controller.compute_velocity(left_current, left_target, dt)
+            self.left_pub.publish(self._to_twist(left_vel, invert=True, swap_xy=True))
+
+        # ── Right arm ─────────────────────────────────────────────────────
+        if not right_active:
+            if self._right_was_active:
+                self.right_controller.reset()
+            self._right_was_active = False
+            stop = TwistStamped()
+            stop.header.stamp    = stamp
+            stop.header.frame_id = self.world_frame
             self.right_pub.publish(stop)
-            return
+        else:
+            if not self._right_was_active:
+                self.right_controller.reset()
+                right_raw = self._get_eef_pose(self.right_frame)
+                rx, ry    = WORKSPACE.clamp(right_raw.x, right_raw.y)
+                self._right_ref_eef = Pose2D(x=rx, y=ry, yaw=right_raw.yaw)
+            self._right_was_active = True
+            rx, ry = WORKSPACE.clamp(
+                self._right_ref_eef.x + right_offset.x,
+                self._right_ref_eef.y + right_offset.y)
+            right_target  = Pose2D(x=rx, y=ry, yaw=self._right_ref_eef.yaw + right_offset.yaw)
+            right_current = self._get_eef_pose(self.right_frame)
+            right_vel     = self.right_controller.compute_velocity(right_current, right_target, dt)
+            self.right_pub.publish(self._to_twist(right_vel, invert=False, swap_xy=True))
 
-        # Rising edge — snapshot both EEF poses as the tracking origin.
-        if not self._was_active:
-            self.left_controller.reset()
-            self.right_controller.reset()
-            left_raw  = self._get_eef_pose(self.left_frame)
-            right_raw = self._get_eef_pose(self.right_frame)
-            lx, ly = WORKSPACE.clamp(left_raw.x,  left_raw.y)
-            rx, ry = WORKSPACE.clamp(right_raw.x, right_raw.y)
-            self._left_ref_eef  = Pose2D(x=lx, y=ly, yaw=left_raw.yaw)
-            self._right_ref_eef = Pose2D(x=rx, y=ry, yaw=right_raw.yaw)
-        self._was_active = True
-
-        lx, ly = WORKSPACE.clamp(self._left_ref_eef.x  + left_offset.x,
-                                  self._left_ref_eef.y  + left_offset.y)
-        rx, ry = WORKSPACE.clamp(self._right_ref_eef.x + right_offset.x,
-                                  self._right_ref_eef.y + right_offset.y)
-        left_target  = Pose2D(x=lx, y=ly, yaw=self._left_ref_eef.yaw  + left_offset.yaw)
-        right_target = Pose2D(x=rx, y=ry, yaw=self._right_ref_eef.yaw + right_offset.yaw)
-
-        left_current  = self._get_eef_pose(self.left_frame)
-        right_current = self._get_eef_pose(self.right_frame)
-
-        left_vel  = self.left_controller.compute_velocity(left_current,  left_target,  dt)
-        right_vel = self.right_controller.compute_velocity(right_current, right_target, dt)
-
-        self._publish_target_markers(left_target, right_target)
-        # Servo linear.x/y are transposed relative to world frame — swap axes.
-        self.left_pub.publish(self._to_twist(left_vel,  invert=True,  swap_xy=True))
-        self.right_pub.publish(self._to_twist(right_vel, invert=False, swap_xy=True))
+        # Publish markers for any arm that is active
+        if left_target is not None or right_target is not None:
+            self._publish_target_markers(
+                left_target  or Pose2D(x=self._left_ref_eef.x,  y=self._left_ref_eef.y),
+                right_target or Pose2D(x=self._right_ref_eef.x, y=self._right_ref_eef.y))
 
     def _step_velocity_control(self, inp: Pose2D, dt: float):
         """
