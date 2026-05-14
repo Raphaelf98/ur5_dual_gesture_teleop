@@ -19,25 +19,35 @@ Switch at runtime (direct_velocity and pd only):
     ros2 param set /teleop_node controller pd
 """
 
+import math
+import time
+import threading
+
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import TwistStamped
+from std_msgs.msg import Float64
+from visualization_msgs.msg import Marker
 from std_srvs.srv import Trigger
 import tf2_ros
-import time
-import threading
 
 from ur5_dual_robot_teleop.controllers import BaseController, Pose2D, Twist2D
 from ur5_dual_robot_teleop.controllers import DirectVelocityController
 from ur5_dual_robot_teleop.controllers import PDController
 from ur5_dual_robot_teleop.controllers import PositionController
+from ur5_dual_robot_teleop.workspace import WORKSPACE
 
 
 # ─── Controller registry — add new controllers here ─────────────────────────
 CONTROLLERS = {
     'direct_velocity': lambda: DirectVelocityController(
-        max_linear=0.3,
-        max_angular=0.5
+        max_linear=0.4,
+        max_angular=0.8
+    ),
+    'p': lambda: PDController(
+        kp_linear=2.5, kd_linear=0.0,
+        kp_angular=2.5, kd_angular=0.0,
+        max_linear=0.3, max_angular=0.5
     ),
     'pd': lambda: PDController(
         kp_linear=2.0, kd_linear=0.3,
@@ -74,6 +84,10 @@ class TeleopNode(Node):
             TwistStamped, '/left_servo_node/delta_twist_cmds', 10)
         self.right_pub = self.create_publisher(
             TwistStamped, '/right_servo_node/delta_twist_cmds', 10)
+        self.gripper_pub = self.create_publisher(
+            Float64, '/gripper/command', 10)
+        self._target_marker_pub = self.create_publisher(
+            Marker, '/teleop/target_markers', 10)
 
         # ── Servo service clients ─────────────────────────────────────────
         self.left_start  = self.create_client(Trigger, '/left_servo_node/start_servo')
@@ -99,10 +113,16 @@ class TeleopNode(Node):
         elif input_type == 'hand_tracking':
             from ur5_dual_robot_teleop.hand_tracking_input import HandTrackingInput
             self.input = HandTrackingInput(self)
+            # Hand tracking starts with P controller — switch to pd once tuned
+            self.left_controller  = self._make_controller('p')
+            self.right_controller = self._make_controller('p')
+            self.controller_name  = 'p'
+            self.get_logger().info('Hand tracking: using P controller (Kp=1.5, Kd=0)')
         else:
             self.get_logger().warn(f'Unknown input type "{input_type}", falling back to keyboard')
             from ur5_dual_robot_teleop.dual_arm_keyboard_node import KeyboardInput
             self.input = KeyboardInput(linear_speed=0.3, angular_speed=0.5)
+
         # ── State ─────────────────────────────────────────────────────────
         self.left_current  = Pose2D()
         self.right_current = Pose2D()
@@ -110,6 +130,11 @@ class TeleopNode(Node):
         self.right_target  = Pose2D()
         self._last_time    = self.get_clock().now()
         self._lock         = threading.Lock()
+
+        # ── Position tracking state (hand tracking only) ───────────────────
+        self._left_ref_eef  = Pose2D()   # EEF pose at fist-close
+        self._right_ref_eef = Pose2D()
+        self._was_active    = False       # previous active state for rising-edge detect
 
         # ── Parameter change callback (runtime controller switching) ──────
         self.add_on_set_parameters_callback(self._on_param_change)
@@ -141,14 +166,36 @@ class TeleopNode(Node):
         return SetParametersResult(successful=True)
 
     def _startup(self):
+        """Phase 1 — call start_servo, then poll until TF is ready."""
         self.startup_timer.cancel()
         self._call_service(self.left_start,  '/left_servo_node/start_servo')
         self._call_service(self.right_start, '/right_servo_node/start_servo')
+        self.get_logger().info('Servo started — waiting for TF...')
+        self._tf_poll = self.create_timer(0.1, self._poll_tf_ready)
+
+    def _poll_tf_ready(self):
+        """Phase 2 — fires every 100 ms until both EEF frames appear in TF."""
+        try:
+            self.tf_buffer.lookup_transform(
+                self.world_frame, self.left_frame,  rclpy.time.Time())
+            self.tf_buffer.lookup_transform(
+                self.world_frame, self.right_frame, rclpy.time.Time())
+        except Exception:
+            return   # not ready yet — try again next tick
+
+        self._tf_poll.cancel()
+
+        # Seed targets from the actual EEF positions so the controller
+        # starts with zero error instead of driving toward the world origin.
+        self.left_target    = self._get_eef_pose(self.left_frame)
+        self.right_target   = self._get_eef_pose(self.right_frame)
+        self._left_ref_eef  = self.left_target
+        self._right_ref_eef = self.right_target
 
         self.get_logger().info('')
         self.get_logger().info('═══════════════════════════════════════')
         self.get_logger().info(f'  Controller: {self.controller_name}  ')
-        self.get_logger().info('  ↑↓←→  Move XY   Q/E  Wrist  ESC Quit')
+        self.get_logger().info('  ↑↓←→  Move XY   A/D  Wrist  ESC Quit')
         self.get_logger().info('═══════════════════════════════════════')
 
         self.input.start()
@@ -166,7 +213,6 @@ class TeleopNode(Node):
         try:
             tf = self.tf_buffer.lookup_transform(
                 self.world_frame, frame, rclpy.time.Time())
-            import math
             # Extract yaw from quaternion
             q = tf.transform.rotation
             yaw = math.atan2(
@@ -204,40 +250,166 @@ class TeleopNode(Node):
             self._stop()
             return
 
-        # Compute dt
         now = self.get_clock().now()
         dt  = (now - self._last_time).nanoseconds / 1e9
         self._last_time = now
 
-        # Get input
-        inp = self.input.get_input()
+        if getattr(self.input, 'is_position_mode', False):
+            if hasattr(self.input, 'get_inputs'):
+                left_offset, right_offset = self.input.get_inputs()
+            else:
+                left_offset = right_offset = self.input.get_input()
+            self._step_position_control(left_offset, right_offset, dt)
+        else:
+            self._step_velocity_control(self.input.get_input(), dt)
 
+        if hasattr(self.input, 'get_gripper_command'):
+            g = Float64()
+            g.data = self.input.get_gripper_command()
+            self.gripper_pub.publish(g)
+
+    def _step_position_control(self, left_offset: Pose2D, right_offset: Pose2D, dt: float):
+        """
+        Position tracking step for hand tracking mode.
+
+        Inactive (fist open): publish zero velocity, reset controllers.
+        Rising edge (fist just closed): snapshot EEF positions as references.
+        Active (fist held): target = ref_eef + offset, P drives EEF to target.
+        Each arm has its own offset — ready for dual hand tracking.
+        """
+        active = self.input.is_active
+
+        # Inactive — stop and reset so next activation starts clean.
+        if not active:
+            if self._was_active:
+                self.left_controller.reset()
+                self.right_controller.reset()
+            self._was_active = False
+            stop = TwistStamped()
+            stop.header.stamp    = self.get_clock().now().to_msg()
+            stop.header.frame_id = self.world_frame
+            self.left_pub.publish(stop)
+            self.right_pub.publish(stop)
+            return
+
+        # Rising edge — snapshot both EEF poses as the tracking origin.
+        if not self._was_active:
+            self.left_controller.reset()
+            self.right_controller.reset()
+            left_raw  = self._get_eef_pose(self.left_frame)
+            right_raw = self._get_eef_pose(self.right_frame)
+            lx, ly = WORKSPACE.clamp(left_raw.x,  left_raw.y)
+            rx, ry = WORKSPACE.clamp(right_raw.x, right_raw.y)
+            self._left_ref_eef  = Pose2D(x=lx, y=ly, yaw=left_raw.yaw)
+            self._right_ref_eef = Pose2D(x=rx, y=ry, yaw=right_raw.yaw)
+        self._was_active = True
+
+        lx, ly = WORKSPACE.clamp(self._left_ref_eef.x  + left_offset.x,
+                                  self._left_ref_eef.y  + left_offset.y)
+        rx, ry = WORKSPACE.clamp(self._right_ref_eef.x + right_offset.x,
+                                  self._right_ref_eef.y + right_offset.y)
+        left_target  = Pose2D(x=lx, y=ly, yaw=self._left_ref_eef.yaw  + left_offset.yaw)
+        right_target = Pose2D(x=rx, y=ry, yaw=self._right_ref_eef.yaw + right_offset.yaw)
+
+        left_current  = self._get_eef_pose(self.left_frame)
+        right_current = self._get_eef_pose(self.right_frame)
+
+        left_vel  = self.left_controller.compute_velocity(left_current,  left_target,  dt)
+        right_vel = self.right_controller.compute_velocity(right_current, right_target, dt)
+
+        self._publish_target_markers(left_target, right_target)
+        # Servo linear.x/y are transposed relative to world frame — swap axes.
+        self.left_pub.publish(self._to_twist(left_vel,  invert=True,  swap_xy=True))
+        self.right_pub.publish(self._to_twist(right_vel, invert=False, swap_xy=True))
+
+    def _step_velocity_control(self, inp: Pose2D, dt: float):
+        """
+        Velocity control step for keyboard mode.
+
+        DirectVelocity: inp is sent straight to servo.
+        PD: inp increments a target position, PD drives EEF toward it.
+        Velocity components that would push the EEF past the workspace
+        boundary are zeroed out before publishing.
+        """
         with self._lock:
-            # Get actual EEF poses from TF
             self.left_current  = self._get_eef_pose(self.left_frame)
             self.right_current = self._get_eef_pose(self.right_frame)
 
-            # Update targets
+            inp = self._clamp_input_at_boundary(inp)
+
             self.left_target  = self._update_target(inp, self.left_target)
             self.right_target = self._update_target(inp, self.right_target)
 
-            # Compute velocities
             left_vel  = self.left_controller.compute_velocity(
                 self.left_current, self.left_target, dt)
             right_vel = self.right_controller.compute_velocity(
                 self.right_current, self.right_target, dt)
 
-        # Publish — invert right arm for same-direction motion
         self.left_pub.publish(self._to_twist(left_vel,  invert=False))
         self.right_pub.publish(self._to_twist(right_vel, invert=True))
 
-    def _to_twist(self, vel: Twist2D, invert: bool = False) -> TwistStamped:
+    def _clamp_input_at_boundary(self, inp: Pose2D) -> Pose2D:
+        """
+        Zero out input components when either arm is near the workspace boundary.
+
+        A 3 cm margin is applied so the stop triggers before the exact edge,
+        compensating for servo command latency and TF reporting lag.
+        Both arms share the same input — if one arm hits a boundary the velocity
+        is zeroed for both. The right arm's world velocity is -inp (invert=True),
+        so its sign checks are mirrored.
+        """
+        MARGIN = 0.03
+        lp = self.left_current
+        rp = self.right_current
+        vx, vy = inp.x, inp.y
+
+        # Left arm  (world vel = +inp)
+        if lp.x <= WORKSPACE.x_min + MARGIN and vx < 0: vx = 0.0
+        if lp.x >= WORKSPACE.x_max - MARGIN and vx > 0: vx = 0.0
+        if lp.y <= WORKSPACE.y_min + MARGIN and vy < 0: vy = 0.0
+        if lp.y >= WORKSPACE.y_max - MARGIN and vy > 0: vy = 0.0
+
+        # Right arm (world vel = -inp, so sign checks are reversed)
+        if rp.x <= WORKSPACE.x_min + MARGIN and vx > 0: vx = 0.0
+        if rp.x >= WORKSPACE.x_max - MARGIN and vx < 0: vx = 0.0
+        if rp.y <= WORKSPACE.y_min + MARGIN and vy > 0: vy = 0.0
+        if rp.y >= WORKSPACE.y_max - MARGIN and vy < 0: vy = 0.0
+
+        return Pose2D(x=vx, y=vy, yaw=inp.yaw)
+
+    def _publish_target_markers(self, left: Pose2D, right: Pose2D):
+        """Publish sphere markers at left/right target positions on the workspace plane."""
+        stamp = self.get_clock().now().to_msg()
+        for marker_id, pose, r, g, b in [
+            (0, left,  0.2, 1.0, 0.2),   # green — left arm target
+            (1, right, 0.2, 0.4, 1.0),   # blue  — right arm target
+        ]:
+            m = Marker()
+            m.header.frame_id    = self.world_frame
+            m.header.stamp       = stamp
+            m.ns                 = 'teleop_targets'
+            m.id                 = marker_id
+            m.type               = Marker.SPHERE
+            m.action             = Marker.ADD
+            m.pose.position.x    = pose.x
+            m.pose.position.y    = pose.y
+            m.pose.position.z    = 0.3    # workspace plane height
+            m.pose.orientation.w = 1.0
+            m.scale.x = m.scale.y = m.scale.z = 0.06
+            m.color.r = r
+            m.color.g = g
+            m.color.b = b
+            m.color.a = 0.85
+            self._target_marker_pub.publish(m)
+
+    def _to_twist(self, vel: Twist2D, invert: bool = False, swap_xy: bool = False) -> TwistStamped:
         sign = -1.0 if invert else 1.0
         msg = TwistStamped()
         msg.header.stamp    = self.get_clock().now().to_msg()
         msg.header.frame_id = self.world_frame
-        msg.twist.linear.x  = float(sign * vel.vx)
-        msg.twist.linear.y  = float(sign * vel.vy)
+        vx, vy = (-vel.vy, vel.vx) if swap_xy else (vel.vx, vel.vy)
+        msg.twist.linear.x  = float(sign * vx)
+        msg.twist.linear.y  = float(sign * vy)
         msg.twist.linear.z  = 0.0
         msg.twist.angular.z = float(sign * vel.wz)
         return msg

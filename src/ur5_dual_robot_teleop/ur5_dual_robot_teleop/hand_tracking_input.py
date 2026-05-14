@@ -1,131 +1,155 @@
 #!/usr/bin/env python3
 """
-Hand Tracking Input Handler — Phase 2
-========================================
-Subscribes to hand tracker topics and converts to robot commands.
+Hand Tracking Input — Delta Tracking
+======================================
+Close fist to start tracking.  The hand position at fist-close is the origin.
+Moving the hand from that origin drives a proportional delta on the robot EEF.
 
-Gesture → Robot behavior:
-  OPEN   → zero velocity (robot stops)
-  FOLLOW → velocity from hand position (robot follows)
-  GRIP   → velocity from hand position + gripper open command
+Scale: full image width  = full workspace X range
+       full image height = full workspace Y range
 
-Dead zone around neutral position prevents drift when hand is still.
+Control model:
+  Fist closes  →  snapshot ref_hand (origin in camera space)
+  Each frame   →  delta = (current_hand - ref_hand) × workspace_scale
+  Fist opens   →  delta = (0, 0) → zero velocity, robot holds position
+
+Tune INVERT_X / INVERT_Y if the robot moves in the wrong direction.
 """
 
 import threading
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
-from std_msgs.msg import Bool, Float64, String
+from std_msgs.msg import Bool, Float64
 
 from ur5_dual_robot_teleop.controllers.base_controller import Pose2D
+from ur5_dual_robot_teleop.workspace import WORKSPACE
 
 
-# ─── Workspace mapping ───────────────────────────────────────────────────────
-NEUTRAL_X    = 0.5     # normalized center X
-NEUTRAL_Y    = 0.5     # normalized center Y
-DEAD_ZONE    = 0.08    # hand movement inside this radius = no motion
-MAX_ZONE     = 0.35    # hand movement beyond this = max velocity
-MAX_VELOCITY = 0.25    # m/s — maximum robot velocity
+# ─── Tuning ───────────────────────────────────────────────────────────────────
+INVERT_X  = True  # mirror left/right  (set True if left/right is inverted)
+INVERT_Y  = False  # flip up/down       (set True if vertical axis moves wrong way)
+DEAD_ZONE = 0.02   # minimum hand displacement (fraction of image) before tracking
 
 
 class HandTrackingInput:
     """
-    Hand tracking input handler with gesture support.
+    Converts hand tracker topics into position offsets for the P controller.
 
-    Converts /hand_pose/right + /hand_tracker/gesture to velocity commands.
-    Only outputs velocity when gesture is FOLLOW or GRIP.
+    Interface contract with TeleopNode:
+      is_position_mode  — True: get_input() returns a position offset, not velocity
+      is_active         — True while fist is closed
+      get_input()       — Pose2D offset from the EEF position at fist-close (meters)
+      get_gripper_command() — gripper value 0.0 (closed) → 1.0 (open)
     """
+
+    is_position_mode = True
 
     def __init__(self, node: Node):
         self._node    = node
         self._lock    = threading.Lock()
-        self._running = True
 
-        # Current state
+        # ── Sensor state (written by ROS callbacks) ────────────────────────
         self._pose    = Pose2D()
-        self._gesture = 'OPEN'
-        self._gripper = 0.0   # 0.0 = closed, 1.0 = open
+        self._active  = False
+        self._gripper = 0.0
 
-        # Subscribers
+        # ── Tracking state (single control thread) ─────────────────────────
+        self._ref_hand   = None   # hand pose at moment of fist-close
+        self._was_active = False
+
+        # ── Subscriptions ─────────────────────────────────────────────────
         node.create_subscription(
-            PoseStamped, '/hand_pose/right',
-            self._pose_callback, 10)
+            PoseStamped, '/hand_pose/right',      self._on_pose,    10)
         node.create_subscription(
-            String, '/hand_tracker/gesture',
-            self._gesture_callback, 10)
+            Bool,        '/hand_tracker/active',  self._on_active,  10)
         node.create_subscription(
-            Float64, '/hand_tracker/gripper',
-            self._gripper_callback, 10)
+            Float64,     '/hand_tracker/gripper', self._on_gripper, 10)
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def start(self):
-        self._node.get_logger().info('Hand tracking input ready.')
+        scale_x = WORKSPACE.x_max - WORKSPACE.x_min
+        scale_y = WORKSPACE.y_max - WORKSPACE.y_min
         self._node.get_logger().info(
-            f'OPEN=stop | FOLLOW=track | GRIP=track+gripper')
-        self._node.get_logger().info(
-            f'Dead zone: {DEAD_ZONE:.2f}  Max vel: {MAX_VELOCITY:.2f} m/s')
+            f'Hand tracking ready | delta mode | '
+            f'scale: {scale_x:.2f} m/image  ×  {scale_y:.2f} m/image  '
+            f'dead zone: {DEAD_ZONE:.2f}')
 
     def stop(self):
-        self._running = False
+        pass
 
     @property
     def should_quit(self) -> bool:
-        return not self._running
+        return False
 
-    def get_input(self) -> Pose2D:
-        """
-        Returns velocity setpoint based on hand position and gesture.
-        Returns zero if gesture is OPEN or hand not detected.
-        """
+    # ── Control interface ─────────────────────────────────────────────────────
+
+    @property
+    def is_active(self) -> bool:
         with self._lock:
-            gesture = self._gesture
-            pose    = self._pose
+            return self._active
 
-        # Only move if fist is closed
-        if gesture == 'OPEN':
+    def get_inputs(self) -> tuple:
+        """
+        Returns (left_offset, right_offset) in meters.
+
+        Currently both arms are driven by the right hand (same offset).
+        When dual hand tracking is added, left and right will diverge.
+        """
+        offset = self._compute_offset()
+        return offset, offset
+
+    def _compute_offset(self) -> Pose2D:
+        """Compute position offset from right hand for one arm."""
+        with self._lock:
+            active = self._active
+            pose   = self._pose
+
+        if not active:
+            self._ref_hand   = None
+            self._was_active = False
             return Pose2D()
 
-        # Hand displacement from neutral
-        dx = pose.x - NEUTRAL_X
-        dy = pose.y - NEUTRAL_Y
+        if not self._was_active:              # rising edge: fist just closed
+            self._ref_hand   = pose
+            self._was_active = True
+            return Pose2D()
 
-        # Apply dead zone and scale
-        vx = self._scale(dx)
-        vy = self._scale(dy)
+        dx_cam = pose.x - self._ref_hand.x
+        dy_cam = pose.y - self._ref_hand.y
 
-        return Pose2D(x=vx, y=vy, yaw=0.0)
+        # Dead zone in camera space — suppresses micro-drift at rest
+        if abs(dx_cam) < DEAD_ZONE: dx_cam = 0.0
+        if abs(dy_cam) < DEAD_ZONE: dy_cam = 0.0
+
+        # Scale: 1 full image width = full workspace range
+        dx_world = dx_cam * (WORKSPACE.x_max - WORKSPACE.x_min)
+        dy_world = dy_cam * (WORKSPACE.y_max - WORKSPACE.y_min)
+
+        if INVERT_X: dx_world = -dx_world
+        if INVERT_Y: dy_world = -dy_world
+
+        return Pose2D(x=dx_world, y=dy_world, yaw=0.0)
 
     def get_gripper_command(self) -> float:
-        """Returns gripper command: 0.0=closed, 1.0=open."""
+        """Returns gripper position: 0.0 = closed, 1.0 = open."""
         with self._lock:
             return self._gripper
 
-    def get_gesture(self) -> str:
-        """Returns current gesture: OPEN, FOLLOW, GRIP."""
-        with self._lock:
-            return self._gesture
+    # ── ROS callbacks ─────────────────────────────────────────────────────────
 
-    def _scale(self, value: float) -> float:
-        """Apply dead zone and scale to velocity."""
-        if abs(value) < DEAD_ZONE:
-            return 0.0
-        sign  = 1.0 if value > 0 else -1.0
-        scale = MAX_VELOCITY / (MAX_ZONE - DEAD_ZONE)
-        return max(-MAX_VELOCITY,
-               min(MAX_VELOCITY,
-                   sign * (abs(value) - DEAD_ZONE) * scale))
-
-    def _pose_callback(self, msg: PoseStamped):
+    def _on_pose(self, msg: PoseStamped):
         with self._lock:
             self._pose = Pose2D(
-                x=msg.pose.position.x,
-                y=msg.pose.position.y,
-                yaw=0.0
+                x   = msg.pose.position.x,
+                y   = msg.pose.position.y,
+                yaw = msg.pose.position.z,  # yaw packed into z by hand_tracker_node
             )
 
-    def _gesture_callback(self, msg: String):
+    def _on_active(self, msg: Bool):
         with self._lock:
-            self._gesture = msg.data
+            self._active = msg.data
 
-    def _gripper_callback(self, msg: Float64):
+    def _on_gripper(self, msg: Float64):
         with self._lock:
             self._gripper = msg.data

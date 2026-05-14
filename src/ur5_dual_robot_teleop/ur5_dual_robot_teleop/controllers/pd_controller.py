@@ -82,8 +82,8 @@ class PDController(BaseController):
             return Twist2D()
 
         # Position errors
-        ex  = target.x - current.x
-        ey  = target.y - current.y
+        ex   = target.x   - current.x
+        ey   = target.y   - current.y
         eyaw = self._angle_diff(target.yaw, current.yaw)
 
         # Derivative terms

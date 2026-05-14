@@ -39,7 +39,7 @@ def generate_launch_description():
         output='log',
     )
 
-    # ── Gripper controllers ───────────────────────────────────────────────────
+    # ── Gripper controllers — spawned after ros2_control is ready ─────────────
     left_gripper_spawner = Node(
         package='controller_manager',
         executable='spawner',
@@ -53,6 +53,7 @@ def generate_launch_description():
         output='screen',
     )
 
+    # ── Gripper driver node ───────────────────────────────────────────────────
     gripper_node = Node(
         package='ur5_dual_robot_teleop',
         executable='gripper_node',
@@ -85,20 +86,7 @@ def generate_launch_description():
         ]
     )
 
-    # ── Hand tracker — delayed 6 s ────────────────────────────────────────────
-    hand_tracker = TimerAction(
-        period=6.0,
-        actions=[
-            Node(
-                package='ur5_dual_robot_teleop',
-                executable='hand_tracker_node',
-                name='hand_tracker_node',
-                output='screen',
-            )
-        ]
-    )
-
-    # ── Hand tracking teleop — delayed 7 s ───────────────────────────────────
+    # ── Keyboard teleop — delayed 7 s ─────────────────────────────────────────
     teleop = TimerAction(
         period=7.0,
         actions=[
@@ -106,7 +94,7 @@ def generate_launch_description():
                 package='ur5_dual_robot_teleop',
                 executable='dual_arm_teleop_node',
                 name='teleop_node',
-                parameters=[{'input': 'hand_tracking'}],
+                parameters=[{'input': 'keyboard'}],
                 output='screen',
             )
         ]
@@ -115,5 +103,5 @@ def generate_launch_description():
     return LaunchDescription([
         demo, rviz,
         left_gripper_spawner, right_gripper_spawner, gripper_node,
-        servo, workspace_visualizer, hand_tracker, teleop,
+        servo, workspace_visualizer, teleop,
     ])

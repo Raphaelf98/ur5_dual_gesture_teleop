@@ -45,8 +45,8 @@ ROI_X2, ROI_Y2 = 0.85, 0.95
 
 # ─── Safety ───────────────────────────────────────────────────────────────────
 MAX_JUMP        = 0.15
-SMOOTH_ALPHA    = 0.4
-SMOOTH_ALPHA_YAW = 0.3   # slightly more smoothing on rotation
+SMOOTH_ALPHA    = 0.85
+SMOOTH_ALPHA_YAW = 0.75
 LOST_TIMEOUT    = 0.5
 
 # ─── Gesture thresholds ───────────────────────────────────────────────────────
@@ -179,7 +179,7 @@ class HandTrackerNode(Node):
         lms        = hand_landmarks.landmark
         fingertips = {4, 8, 12, 16, 20}
 
-        for conn in mp.solutions.holistic.HAND_CONNECTIONS:
+        for conn in mp.solutions.hands.HAND_CONNECTIONS:
             p1, p2 = lms[conn[0]], lms[conn[1]]
             cv2.line(frame,
                      (int(p1.x * w), int(p1.y * h)),
@@ -331,10 +331,11 @@ class HandTrackerNode(Node):
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.get_logger().info(f'Camera: {w}x{h}')
 
-        with mp.solutions.holistic.Holistic(
+        with mp.solutions.hands.Hands(
+            max_num_hands=1,
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5
-        ) as holistic:
+        ) as hands:
 
             while rclpy.ok():
                 ret, frame = cap.read()
@@ -343,7 +344,7 @@ class HandTrackerNode(Node):
 
                 frame   = cv2.flip(frame, 1)
                 rgb     = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                results = holistic.process(rgb)
+                results = hands.process(rgb)
 
                 self._draw_roi(frame, w, h)
 
@@ -353,14 +354,24 @@ class HandTrackerNode(Node):
                 yaw_deg       = 0.0
                 gripper       = 0.0
 
-                if results.right_hand_landmarks:
-                    lms  = results.right_hand_landmarks.landmark
+                # Extract right hand from multi-hand results
+                right_hand = None
+                if results.multi_hand_landmarks and results.multi_handedness:
+                    for hand_lms, handedness in zip(
+                            results.multi_hand_landmarks,
+                            results.multi_handedness):
+                        if handedness.classification[0].label == 'Right':
+                            right_hand = hand_lms
+                            break
+
+                if right_hand:
+                    lms  = right_hand.landmark
                     x, y = lms[0].x, lms[0].y
 
                     in_roi  = self._in_roi(x, y)
                     jump_ok = self._jump_ok(x, y)
 
-                    self._draw_landmarks(frame, results.right_hand_landmarks, w, h)
+                    self._draw_landmarks(frame, right_hand, w, h)
 
                     if in_roi and jump_ok:
                         self._prev_x    = x
