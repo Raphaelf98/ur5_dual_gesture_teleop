@@ -1,58 +1,114 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="dual_ur5">
 
-  <!-- Include official UR macro from ur_description package -->
   <xacro:include filename="$(find ur_description)/urdf/ur_macro.xacro"/>
-
-  <!-- ==================== WORLD & BASE ==================== -->
 
   <link name="world"/>
 
-  <!-- Mounting table between the two arms -->
-  <link name="base_platform">
+  <!-- ==================== TORSO STAND ==================== -->
+
+  <link name="torso_stand">
     <visual>
-      <geometry><box size="1.0 0.5 0.05"/></geometry>
-      <material name="grey"><color rgba="0.5 0.5 0.5 1"/></material>
+      <origin xyz="0 0 0.275"/>
+      <geometry><box size="0.25 0.25 0.55"/></geometry>
+      <material name="dark_grey"><color rgba="0.25 0.25 0.25 1"/></material>
     </visual>
     <collision>
-      <geometry><box size="1.0 0.5 0.05"/></geometry>
+      <origin xyz="0 0 0.275"/>
+      <geometry><box size="0.25 0.25 0.55"/></geometry>
     </collision>
     <inertial>
-      <mass value="20.0"/>
-      <inertia ixx="0.1" ixy="0" ixz="0" iyy="0.1" iyz="0" izz="0.1"/>
+      <mass value="30.0"/>
+      <inertia ixx="0.6" ixy="0" ixz="0" iyy="0.6" iyz="0" izz="0.1"/>
     </inertial>
   </link>
 
-  <joint name="world_to_platform" type="fixed">
+  <joint name="world_to_stand" type="fixed">
     <parent link="world"/>
-    <child link="base_platform"/>
-    <origin xyz="0 0 -0.025" rpy="0 0 0"/>
+    <child link="torso_stand"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
 
-  <!-- ==================== LEFT ARM (UR5) ==================== -->
+  <!-- ==================== TORSO BODY ==================== -->
+  <!--
+    Arm attachment points: (±0.22, 0, 1.00) world = (±0.22, 0, 0.45) in torso frame.
 
-    <xacro:ur_robot
+    V-shape mount (viewed from behind, i.e. looking along +Y):
+      Left  arm rpy="${pi} ${-pi/4} 0"  → base Z = [+1/√2, 0, -1/√2]  hangs right+down  (\)
+      Right arm rpy="${pi} ${pi/4}  0"  → base Z = [-1/√2, 0, -1/√2]  hangs left+down   (/)
+    The two arms cross inward forming a V.
+  -->
+
+  <link name="torso">
+    <visual>
+      <origin xyz="0 0 0.275"/>
+      <geometry><box size="0.44 0.22 0.55"/></geometry>
+      <material name="light_grey"><color rgba="0.75 0.75 0.75 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.275"/>
+      <geometry><box size="0.44 0.22 0.55"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="15.0"/>
+      <inertia ixx="0.4" ixy="0" ixz="0" iyy="0.4" iyz="0" izz="0.15"/>
+    </inertial>
+  </link>
+
+  <joint name="stand_to_torso" type="fixed">
+    <parent link="torso_stand"/>
+    <child link="torso"/>
+    <origin xyz="0 0 0.55" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ==================== HEAD ==================== -->
+
+  <link name="head">
+    <visual>
+      <origin xyz="0 0 0.11"/>
+      <geometry><sphere radius="0.11"/></geometry>
+      <material name="light_grey"><color rgba="0.75 0.75 0.75 1"/></material>
+    </visual>
+    <inertial>
+      <mass value="2.0"/>
+      <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01"/>
+    </inertial>
+  </link>
+
+  <joint name="torso_to_head" type="fixed">
+    <parent link="torso"/>
+    <child link="head"/>
+    <origin xyz="0 0 0.55" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ==================== LEFT ARM ==================== -->
+  <!-- Mounted left shoulder, base plate tilted 45° inward (V-shape) -->
+
+  <xacro:ur_robot
     name="left"
     tf_prefix="left_"
-    parent="world"
+    parent="torso"
     joint_limits_parameters_file="$(find ur_description)/config/ur5/joint_limits.yaml"
     kinematics_parameters_file="$(find ur_description)/config/ur5/default_kinematics.yaml"
     physical_parameters_file="$(find ur_description)/config/ur5/physical_parameters.yaml"
     visual_parameters_file="$(find ur_description)/config/ur5/visual_parameters.yaml"
     generate_ros2_control_tag="false">
-    <origin xyz="-0.35 0 0" rpy="0 0 1.5708"/>
+    <origin xyz="-0.22 0 0.45" rpy="${pi} ${-pi/4} 0"/>
   </xacro:ur_robot>
+
+  <!-- ==================== RIGHT ARM ==================== -->
+  <!-- Mounted right shoulder, base plate tilted 45° inward (V-shape mirror) -->
 
   <xacro:ur_robot
     name="right"
     tf_prefix="right_"
-    parent="world"
+    parent="torso"
     joint_limits_parameters_file="$(find ur_description)/config/ur5/joint_limits.yaml"
     kinematics_parameters_file="$(find ur_description)/config/ur5/default_kinematics.yaml"
     physical_parameters_file="$(find ur_description)/config/ur5/physical_parameters.yaml"
     visual_parameters_file="$(find ur_description)/config/ur5/visual_parameters.yaml"
     generate_ros2_control_tag="false">
-    <origin xyz="0.35 0 0" rpy="0 0 ${pi + 1.5708}"/>
+    <origin xyz="0.22 0 0.45" rpy="${pi} ${pi/4} 0"/>
   </xacro:ur_robot>
 
   <!-- ==================== GRIPPER MACRO ==================== -->
@@ -131,7 +187,6 @@
       <dynamics damping="0.1" friction="0.1"/>
     </joint>
 
-    <!-- TCP (Tool Center Point) — planning target for IK -->
     <link name="${prefix}tcp"/>
     <joint name="${prefix}tcp_joint" type="fixed">
       <parent link="${prefix}gripper_base"/>
@@ -141,9 +196,7 @@
 
   </xacro:macro>
 
-  <!-- ==================== ATTACH GRIPPERS ==================== -->
-
-  <xacro:simple_gripper prefix="left_" parent="left_tool0"/>
+  <xacro:simple_gripper prefix="left_"  parent="left_tool0"/>
   <xacro:simple_gripper prefix="right_" parent="right_tool0"/>
 
 </robot>

@@ -409,7 +409,7 @@ class TeleopNode(Node):
             m.action             = Marker.ADD
             m.pose.position.x    = pose.x
             m.pose.position.y    = pose.y
-            m.pose.position.z    = 0.3    # workspace plane height
+            m.pose.position.z    = WORKSPACE.center_z
             m.pose.orientation.w = 1.0
             m.scale.x = m.scale.y = m.scale.z = 0.06
             m.color.r = r

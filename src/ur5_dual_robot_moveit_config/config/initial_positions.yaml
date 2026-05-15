@@ -1,17 +1,19 @@
 initial_positions:
-  left_shoulder_pan_joint: 0.0
-  left_shoulder_lift_joint: -1.57
-  left_elbow_joint: 1.57
-  left_wrist_1_joint: -1.57
-  left_wrist_2_joint: -1.57
-  left_wrist_3_joint: 0.0
-  right_shoulder_pan_joint: 3.14
-  right_shoulder_lift_joint: -1.57
-  right_elbow_joint: 1.57
-  right_wrist_1_joint: -1.57
-  right_wrist_2_joint: -1.57
-  right_wrist_3_joint: 0.0
-  left_finger_left_joint: 0.0
-  left_finger_right_joint: 0.0
-  right_finger_left_joint: 0.0
-  right_finger_right_joint: 0.0
+  # V-shape mount (45° inward tilt).
+  # Both TCPs at (0, 0.50, 0.60) m world, approach mirrored ±X.
+  left_shoulder_pan_joint:    1.1084
+  left_shoulder_lift_joint:  -1.5614
+  left_elbow_joint:           1.5930
+  left_wrist_1_joint:        -0.3569
+  left_wrist_2_joint:         1.5708
+  left_wrist_3_joint:         0.0
+  right_shoulder_pan_joint:   5.1748
+  right_shoulder_lift_joint: -1.8254
+  right_elbow_joint:         -1.7874
+  right_wrist_1_joint:        0.7965
+  right_wrist_2_joint:        1.5708
+  right_wrist_3_joint:        0.0
+  left_finger_left_joint:     0.0
+  left_finger_right_joint:    0.0
+  right_finger_left_joint:    0.0
+  right_finger_right_joint:   0.0

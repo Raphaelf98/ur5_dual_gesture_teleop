@@ -18,7 +18,7 @@ from std_msgs.msg import ColorRGBA
 FRAME_ID  = 'world'
 CENTER_X  = -0.1    # m — workspace center in X
 CENTER_Y  = 0.5    # m — workspace center in Y
-CENTER_Z  = 0.3    # m — operating height (Z stays fixed during XY control)
+CENTER_Z  = 0.60   # m — TCP operating height
 WIDTH     = 1.5    # m — extent in X direction
 DEPTH     = 0.6    # m — extent in Y direction
 

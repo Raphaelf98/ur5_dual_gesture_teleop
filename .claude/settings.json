@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat > *)",
+      "Bash(python3)"
+    ],
+    "additionalDirectories": [
+      "/home/raphael/robolab/ros2_ws/src/ur5_dual_robot_description/urdf"
+    ]
+  }
+}
