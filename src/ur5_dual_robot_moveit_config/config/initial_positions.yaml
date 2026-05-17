@@ -1,16 +1,16 @@
 initial_positions:
-  # V-shape mount (45° inward tilt).
-  # Both TCPs at (0, 0.50, 0.60) m world, approach mirrored ±X.
-  left_shoulder_pan_joint:    1.1084
-  left_shoulder_lift_joint:  -1.5614
-  left_elbow_joint:           1.5930
-  left_wrist_1_joint:        -0.3569
+  # Inverted-V mount (45° outward tilt, arms on opposite sides).
+  # Both TCPs at (0, 0.50, 0.60) m world, grippers facing forward (+Y), approach mirrored ±X.
+  left_shoulder_pan_joint:    4.6761
+  left_shoulder_lift_joint:   1.8324
+  left_elbow_joint:           0.7109
+  left_wrist_1_joint:         0.7195
   left_wrist_2_joint:         1.5708
   left_wrist_3_joint:         0.0
-  right_shoulder_pan_joint:   5.1748
-  right_shoulder_lift_joint: -1.8254
-  right_elbow_joint:         -1.7874
-  right_wrist_1_joint:        0.7965
+  right_shoulder_pan_joint:   1.6070
+  right_shoulder_lift_joint:  0.1214
+  right_elbow_joint:          1.4768
+  right_wrist_1_joint:       -1.7194
   right_wrist_2_joint:        1.5708
   right_wrist_3_joint:        0.0
   left_finger_left_joint:     0.0

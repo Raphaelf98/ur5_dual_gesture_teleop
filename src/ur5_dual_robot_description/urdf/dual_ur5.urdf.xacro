@@ -33,10 +33,10 @@
   <!--
     Arm attachment points: (±0.22, 0, 1.00) world = (±0.22, 0, 0.45) in torso frame.
 
-    V-shape mount (viewed from behind, i.e. looking along +Y):
-      Left  arm rpy="${pi} ${-pi/4} 0"  → base Z = [+1/√2, 0, -1/√2]  hangs right+down  (\)
-      Right arm rpy="${pi} ${pi/4}  0"  → base Z = [-1/√2, 0, -1/√2]  hangs left+down   (/)
-    The two arms cross inward forming a V.
+    Inverted-V mount (viewed from behind, i.e. looking along +Y):
+      Left  arm at +0.22 rpy="${pi} ${-3*pi/4} 0"  → base Z = [+1/√2, 0, +1/√2]  (\, right+up)
+      Right arm at -0.22 rpy="${pi} ${3*pi/4}  0"  → base Z = [-1/√2, 0, +1/√2]  (/, left+up)
+    Arms splay outward+upward forming Λ from behind.
   -->
 
   <link name="torso">
@@ -93,7 +93,7 @@
     physical_parameters_file="$(find ur_description)/config/ur5/physical_parameters.yaml"
     visual_parameters_file="$(find ur_description)/config/ur5/visual_parameters.yaml"
     generate_ros2_control_tag="false">
-    <origin xyz="-0.22 0 0.45" rpy="${pi} ${-pi/4} 0"/>
+    <origin xyz="0.22 0 0.45" rpy="${pi} ${-3*pi/4} 0"/>
   </xacro:ur_robot>
 
   <!-- ==================== RIGHT ARM ==================== -->
@@ -108,7 +108,7 @@
     physical_parameters_file="$(find ur_description)/config/ur5/physical_parameters.yaml"
     visual_parameters_file="$(find ur_description)/config/ur5/visual_parameters.yaml"
     generate_ros2_control_tag="false">
-    <origin xyz="0.22 0 0.45" rpy="${pi} ${pi/4} 0"/>
+    <origin xyz="-0.22 0 0.45" rpy="${pi} ${3*pi/4} 0"/>
   </xacro:ur_robot>
 
   <!-- ==================== GRIPPER MACRO ==================== -->
