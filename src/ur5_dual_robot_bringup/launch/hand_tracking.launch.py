@@ -1,28 +1,37 @@
+import os
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, TimerAction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 from moveit_configs_utils import MoveItConfigsBuilder
-import os
 
 
-def generate_launch_description():
+def launch_setup(context, *args, **kwargs):
     moveit_pkg  = get_package_share_directory('ur5_dual_robot_moveit_config')
     bringup_pkg = get_package_share_directory('ur5_dual_robot_bringup')
 
+    solver = context.perform_substitution(LaunchConfiguration("kinematics_solver"))
+    kinematics_file = os.path.join(moveit_pkg, "config", f"kinematics_{solver}.yaml")
+
     rviz_config = os.path.join(bringup_pkg, 'rviz', 'dual_robot.rviz')
 
-    moveit_config = MoveItConfigsBuilder(
-        'dual_ur5', package_name='ur5_dual_robot_moveit_config'
-    ).to_moveit_configs()
+    moveit_config = (
+        MoveItConfigsBuilder('dual_ur5', package_name='ur5_dual_robot_moveit_config')
+        .robot_description_kinematics(file_path=kinematics_file)
+        .to_moveit_configs()
+    )
 
     # ── Demo (rsp, move_group, ros2_control, spawn_controllers) — no RViz ─────
     demo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(moveit_pkg, 'launch', 'demo.launch.py')
         ),
-        launch_arguments={'use_rviz': 'false'}.items(),
+        launch_arguments={
+            'use_rviz': 'false',
+            'kinematics_solver': solver,
+        }.items(),
     )
 
     # ── RViz with our saved config ────────────────────────────────────────────
@@ -112,8 +121,20 @@ def generate_launch_description():
         ]
     )
 
-    return LaunchDescription([
+    return [
         demo, rviz,
         left_gripper_spawner, right_gripper_spawner, gripper_node,
         servo, workspace_visualizer, hand_tracker, teleop,
+    ]
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            "kinematics_solver",
+            default_value="analytical",
+            description="Kinematics solver: 'analytical' (IKFast) or 'numerical' (KDL)",
+            choices=["analytical", "numerical"],
+        ),
+        OpaqueFunction(function=launch_setup),
     ])

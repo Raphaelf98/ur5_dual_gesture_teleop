@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<library path="dual_ur5_left_arm_moveit_ikfast_plugin">
+  <class name="dual_ur5_left_arm/IKFastKinematicsPlugin" type="dual_ur5_left_arm::IKFastKinematicsPlugin" base_class_type="kinematics::KinematicsBase">
+    <description>IKFast61 plugin for closed-form kinematics of dual_ur5 left_arm</description>
+  </class>
+</library>
