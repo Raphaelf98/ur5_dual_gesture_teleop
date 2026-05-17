@@ -10,6 +10,7 @@ Scale: full image width  = full workspace X range
        full image height = full workspace Y range
 """
 
+import math
 import threading
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
@@ -17,18 +18,15 @@ from std_msgs.msg import Bool, Float64
 
 from ur5_dual_robot_teleop.controllers.base_controller import Pose2D
 from ur5_dual_robot_teleop.workspace import WORKSPACE
+from ur5_dual_robot_teleop.teleop_config import CONFIG
 
-
-# ─── Tuning ───────────────────────────────────────────────────────────────────
-INVERT_X  = True   # mirror left/right
-INVERT_Y  = False  # flip up/down
-DEAD_ZONE = 0.02   # minimum hand displacement (fraction of image) before tracking
-
-# The hand tracker publishes yaw in normalized units [-1, 1] where 1 unit ≈ 55°.
-# Scaling to ~0.4 keeps yaw targets close to the current EEF yaw in radians,
-# preventing the PD controller from seeing large errors and saturating.
-YAW_SCALE     = 0.4
-YAW_DEAD_ZONE = 0.05  # minimum yaw delta before tracking
+# ─── Load parameters from config ─────────────────────────────────────────────
+_cfg = CONFIG['hand_tracking_input']
+INVERT_X      = _cfg['invert_x']
+INVERT_Y      = _cfg['invert_y']
+DEAD_ZONE     = _cfg['dead_zone']
+YAW_SCALE     = _cfg['yaw_scale']
+YAW_DEAD_ZONE = _cfg['yaw_dead_zone']
 
 
 class HandTrackingInput:
@@ -58,6 +56,8 @@ class HandTrackingInput:
         # ── Right hand tracking state ──────────────────────────────────────
         self._right_ref_hand   = None
         self._right_was_active = False
+        self._right_prev_yaw   = None
+        self._right_acc_dyaw   = 0.0
 
         # ── Left hand sensor state ─────────────────────────────────────────
         self._left_pose    = Pose2D()
@@ -67,6 +67,8 @@ class HandTrackingInput:
         # ── Left hand tracking state ───────────────────────────────────────
         self._left_ref_hand   = None
         self._left_was_active = False
+        self._left_prev_yaw   = None
+        self._left_acc_dyaw   = 0.0
 
         # ── Subscriptions — right hand ─────────────────────────────────────
         node.create_subscription(
@@ -130,24 +132,34 @@ class HandTrackingInput:
         if not active:
             self._right_ref_hand   = None
             self._right_was_active = False
+            self._right_prev_yaw   = None
+            self._right_acc_dyaw   = 0.0
             return Pose2D()
 
         if not self._right_was_active:
             self._right_ref_hand   = pose
             self._right_was_active = True
+            self._right_prev_yaw   = pose.yaw
+            self._right_acc_dyaw   = 0.0
             return Pose2D()
 
         dx_cam = pose.x - self._right_ref_hand.x
         dy_cam = pose.y - self._right_ref_hand.y
-        dyaw   = pose.yaw - self._right_ref_hand.yaw
 
-        if abs(dx_cam) < DEAD_ZONE:     dx_cam = 0.0
-        if abs(dy_cam) < DEAD_ZONE:     dy_cam = 0.0
-        if abs(dyaw)   < YAW_DEAD_ZONE: dyaw   = 0.0
+        # Incremental yaw: accumulate per-frame steps normalized to [-π, π]
+        # so the total never jumps when crossing the ±π boundary.
+        step = pose.yaw - self._right_prev_yaw
+        step = (step + math.pi) % (2 * math.pi) - math.pi
+        self._right_prev_yaw = pose.yaw
+        if abs(step) >= YAW_DEAD_ZONE:
+            self._right_acc_dyaw += step
 
-        dx_world = dx_cam * (WORKSPACE.x_max - WORKSPACE.x_min)
-        dy_world = dy_cam * (WORKSPACE.y_max - WORKSPACE.y_min)
-        dyaw_world = -dyaw * YAW_SCALE
+        if abs(dx_cam) < DEAD_ZONE: dx_cam = 0.0
+        if abs(dy_cam) < DEAD_ZONE: dy_cam = 0.0
+
+        dx_world   = dx_cam * (WORKSPACE.x_max - WORKSPACE.x_min)
+        dy_world   = dy_cam * (WORKSPACE.y_max - WORKSPACE.y_min)
+        dyaw_world = -self._right_acc_dyaw * YAW_SCALE
 
         if INVERT_X: dx_world = -dx_world
         if INVERT_Y: dy_world = -dy_world
@@ -162,24 +174,34 @@ class HandTrackingInput:
         if not active:
             self._left_ref_hand   = None
             self._left_was_active = False
+            self._left_prev_yaw   = None
+            self._left_acc_dyaw   = 0.0
             return Pose2D()
 
         if not self._left_was_active:
             self._left_ref_hand   = pose
             self._left_was_active = True
+            self._left_prev_yaw   = pose.yaw
+            self._left_acc_dyaw   = 0.0
             return Pose2D()
 
         dx_cam = pose.x - self._left_ref_hand.x
         dy_cam = pose.y - self._left_ref_hand.y
-        dyaw   = pose.yaw - self._left_ref_hand.yaw
 
-        if abs(dx_cam) < DEAD_ZONE:     dx_cam = 0.0
-        if abs(dy_cam) < DEAD_ZONE:     dy_cam = 0.0
-        if abs(dyaw)   < YAW_DEAD_ZONE: dyaw   = 0.0
+        # Incremental yaw: accumulate per-frame steps normalized to [-π, π]
+        # so the total never jumps when crossing the ±π boundary.
+        step = pose.yaw - self._left_prev_yaw
+        step = (step + math.pi) % (2 * math.pi) - math.pi
+        self._left_prev_yaw = pose.yaw
+        if abs(step) >= YAW_DEAD_ZONE:
+            self._left_acc_dyaw += step
 
-        dx_world = dx_cam * (WORKSPACE.x_max - WORKSPACE.x_min)
-        dy_world = dy_cam * (WORKSPACE.y_max - WORKSPACE.y_min)
-        dyaw_world = dyaw * YAW_SCALE
+        if abs(dx_cam) < DEAD_ZONE: dx_cam = 0.0
+        if abs(dy_cam) < DEAD_ZONE: dy_cam = 0.0
+
+        dx_world   = dx_cam * (WORKSPACE.x_max - WORKSPACE.x_min)
+        dy_world   = dy_cam * (WORKSPACE.y_max - WORKSPACE.y_min)
+        dyaw_world = self._left_acc_dyaw * YAW_SCALE
 
         if INVERT_X: dx_world = -dx_world
         if INVERT_Y: dy_world = -dy_world
@@ -199,11 +221,13 @@ class HandTrackingInput:
     # ── ROS callbacks — right hand ────────────────────────────────────────────
 
     def _on_right_pose(self, msg: PoseStamped):
+        q = msg.pose.orientation
+        yaw = math.atan2(2.0 * q.w * q.z, 1.0 - 2.0 * q.z * q.z)
         with self._lock:
             self._right_pose = Pose2D(
-                x   = msg.pose.position.x,
-                y   = msg.pose.position.y,
-                yaw = msg.pose.position.z,  # yaw packed into z by hand_tracker_node
+                x=msg.pose.position.x,
+                y=msg.pose.position.y,
+                yaw=yaw,
             )
 
     def _on_right_active(self, msg: Bool):
@@ -217,11 +241,13 @@ class HandTrackingInput:
     # ── ROS callbacks — left hand ─────────────────────────────────────────────
 
     def _on_left_pose(self, msg: PoseStamped):
+        q = msg.pose.orientation
+        yaw = math.atan2(2.0 * q.w * q.z, 1.0 - 2.0 * q.z * q.z)
         with self._lock:
             self._left_pose = Pose2D(
-                x   = msg.pose.position.x,
-                y   = msg.pose.position.y,
-                yaw = msg.pose.position.z,
+                x=msg.pose.position.x,
+                y=msg.pose.position.y,
+                yaw=yaw,
             )
 
     def _on_left_active(self, msg: Bool):

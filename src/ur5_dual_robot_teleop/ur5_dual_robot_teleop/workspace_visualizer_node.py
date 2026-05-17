@@ -20,6 +20,10 @@ from std_msgs.msg import ColorRGBA
 import tf2_ros
 
 from ur5_dual_robot_teleop.workspace import WORKSPACE, build_markers
+from ur5_dual_robot_teleop.teleop_config import CONFIG
+
+_EEF_SCALE   = CONFIG['visualization']['eef_sphere_scale']
+_VIS_RATE    = CONFIG['visualization']['publish_rate']
 
 
 class WorkspaceVisualizerNode(Node):
@@ -40,7 +44,7 @@ class WorkspaceVisualizerNode(Node):
         self._right_frame = self.get_parameter('right_frame').value
 
         self._eef_logged = False          # print EEF positions once on startup
-        self.create_timer(0.1, self._publish)   # 10 Hz
+        self.create_timer(1.0 / _VIS_RATE, self._publish)
 
         self.get_logger().info(
             f'Workspace  frame: {WORKSPACE.frame_id}\n'
@@ -110,7 +114,7 @@ class WorkspaceVisualizerNode(Node):
         m.pose.position.y = y
         m.pose.position.z = WORKSPACE.center_z   # projected onto the plane
         m.pose.orientation.w = 1.0
-        m.scale.x = m.scale.y = m.scale.z = 0.04
+        m.scale.x = m.scale.y = m.scale.z = _EEF_SCALE
         m.color = (ColorRGBA(r=0.1, g=0.9, b=0.1, a=1.0) if inside
                    else ColorRGBA(r=0.9, g=0.1, b=0.1, a=1.0))
         array.markers.append(m)

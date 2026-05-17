@@ -25,9 +25,9 @@ import threading
 
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import TwistStamped
+from geometry_msgs.msg import TwistStamped, Point
 from std_msgs.msg import Float64
-from visualization_msgs.msg import Marker
+from visualization_msgs.msg import Marker, MarkerArray
 from std_srvs.srv import Trigger
 import tf2_ros
 
@@ -36,38 +36,45 @@ from ur5_dual_robot_teleop.controllers import DirectVelocityController
 from ur5_dual_robot_teleop.controllers import PDController
 from ur5_dual_robot_teleop.controllers import PositionController
 from ur5_dual_robot_teleop.workspace import WORKSPACE
+from ur5_dual_robot_teleop.teleop_config import CONFIG
+
+# ─── Load parameters from config ─────────────────────────────────────────────
+_cc = CONFIG['controllers']
+_vc = CONFIG['visualization']
+
+PUBLISH_RATE     = _cc['publish_rate']
+BOUNDARY_MARGIN  = _cc['boundary_margin']
+ARROW_LENGTH     = _vc['target_arrow_length']
+SPHERE_SCALE     = _vc['target_sphere_scale']
+ARROW_SHAFT_D    = _vc['arrow_shaft_diameter']
+ARROW_HEAD_D     = _vc['arrow_head_diameter']
+
+
+def _pd(key) -> PDController:
+    c = _cc[key]
+    return PDController(
+        kp_linear=c['kp_linear'],   kd_linear=c['kd_linear'],
+        kp_angular=c['kp_angular'], kd_angular=c['kd_angular'],
+        max_linear=c['max_linear'], max_angular=c['max_angular'],
+    )
 
 
 # ─── Controller registry — add new controllers here ─────────────────────────
-CONTROLLERS = {
-    'direct_velocity': lambda: DirectVelocityController(
-        max_linear=0.4,
-        max_angular=0.8
-    ),
-    'p': lambda: PDController(
-        kp_linear=5.0, kd_linear=0.0,
-        kp_angular=2.5, kd_angular=0.0,
-        max_linear=1.0, max_angular=1.0
-    ),
-    'pd': lambda: PDController(
-        kp_linear=2.0, kd_linear=0.3,
-        kp_angular=1.5, kd_angular=0.2,
-        max_linear=0.4, max_angular=0.8
-    ),
-    # Hand tracking: high linear gains for responsive XY, low angular gains to
-    # prevent wrist overshoot (yaw target is in mixed units — see hand_tracking_input.py)
-    'hand_tracking': lambda: PDController(
-        kp_linear=5.0, kd_linear=0.0,
-        kp_angular=0.8, kd_angular=0.15,
-        max_linear=1.0, max_angular=0.4,
-    ),
-    'position': lambda: PositionController(
-        position_threshold=0.01,
-        angle_threshold=0.05
-    ),
-}
+def _make_controllers() -> dict:
+    dv = _cc['direct_velocity']
+    pc = _cc['position']
+    return {
+        'direct_velocity': lambda: DirectVelocityController(
+            max_linear=dv['max_linear'], max_angular=dv['max_angular']),
+        'p':             lambda: _pd('p'),
+        'pd':            lambda: _pd('pd'),
+        'hand_tracking': lambda: _pd('hand_tracking'),
+        'position':      lambda: PositionController(
+            position_threshold=pc['position_threshold'],
+            angle_threshold=pc['angle_threshold']),
+    }
 
-PUBLISH_RATE = 50  # Hz
+CONTROLLERS = _make_controllers()
 
 
 class TeleopNode(Node):
@@ -96,7 +103,7 @@ class TeleopNode(Node):
         self.right_gripper_pub = self.create_publisher(
             Float64, '/right_gripper/command', 10)
         self._target_marker_pub = self.create_publisher(
-            Marker, '/teleop/target_markers', 10)
+            MarkerArray, '/teleop/target_markers', 10)
 
         # ── Servo service clients ─────────────────────────────────────────
         self.left_start  = self.create_client(Trigger, '/left_servo_node/start_servo')
@@ -387,7 +394,7 @@ class TeleopNode(Node):
         is zeroed for both. The right arm's world velocity is -inp (invert=True),
         so its sign checks are mirrored.
         """
-        MARGIN = 0.03
+        MARGIN = BOUNDARY_MARGIN
         lp = self.left_current
         rp = self.right_current
         vx, vy = inp.x, inp.y
@@ -407,29 +414,53 @@ class TeleopNode(Node):
         return Pose2D(x=vx, y=vy, yaw=inp.yaw)
 
     def _publish_target_markers(self, left: Pose2D, right: Pose2D):
-        """Publish sphere markers at left/right target positions on the workspace plane."""
-        stamp = self.get_clock().now().to_msg()
-        for marker_id, pose, r, g, b in [
-            (0, left,  0.2, 1.0, 0.2),   # green — left arm target
-            (1, right, 0.2, 0.4, 1.0),   # blue  — right arm target
+        """Publish sphere + yaw-arrow markers for left/right target poses on the workspace plane."""
+        stamp   = self.get_clock().now().to_msg()
+        z_plane = WORKSPACE.center_z
+        array   = MarkerArray()
+
+        for sphere_id, arrow_id, pose, r, g, b in [
+            (0, 2, left,  0.2, 1.0, 0.2),   # green — left arm
+            (1, 3, right, 0.2, 0.4, 1.0),   # blue  — right arm
         ]:
+            # ── Position sphere ───────────────────────────────────────────
             m = Marker()
             m.header.frame_id    = self.world_frame
             m.header.stamp       = stamp
             m.ns                 = 'teleop_targets'
-            m.id                 = marker_id
+            m.id                 = sphere_id
             m.type               = Marker.SPHERE
             m.action             = Marker.ADD
             m.pose.position.x    = pose.x
             m.pose.position.y    = pose.y
-            m.pose.position.z    = 0.3    # workspace plane height
+            m.pose.position.z    = z_plane
             m.pose.orientation.w = 1.0
-            m.scale.x = m.scale.y = m.scale.z = 0.06
-            m.color.r = r
-            m.color.g = g
-            m.color.b = b
-            m.color.a = 0.85
-            self._target_marker_pub.publish(m)
+            m.scale.x = m.scale.y = m.scale.z = SPHERE_SCALE
+            m.color.r = r; m.color.g = g; m.color.b = b; m.color.a = 0.85
+            array.markers.append(m)
+
+            # ── Yaw orientation arrow ─────────────────────────────────────
+            a = Marker()
+            a.header.frame_id = self.world_frame
+            a.header.stamp    = stamp
+            a.ns              = 'teleop_targets'
+            a.id              = arrow_id
+            a.type            = Marker.ARROW
+            a.action          = Marker.ADD
+            a.scale.x = ARROW_SHAFT_D
+            a.scale.y = ARROW_HEAD_D
+            a.scale.z = 0.0
+            a.color.r = r; a.color.g = g; a.color.b = b; a.color.a = 1.0
+            tail = Point(x=pose.x, y=pose.y, z=z_plane)
+            head = Point(
+                x=pose.x + ARROW_LENGTH * math.cos(pose.yaw),
+                y=pose.y + ARROW_LENGTH * math.sin(pose.yaw),
+                z=z_plane,
+            )
+            a.points = [tail, head]
+            array.markers.append(a)
+
+        self._target_marker_pub.publish(array)
 
     def _to_twist(self, vel: Twist2D, invert: bool = False, swap_xy: bool = False) -> TwistStamped:
         sign = -1.0 if invert else 1.0

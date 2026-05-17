@@ -1,0 +1,81 @@
+# ─── Workspace ────────────────────────────────────────────────────────────────
+workspace:
+  frame_id: world
+  center_x: -0.1       # m — workspace center in X
+  center_y:  0.5       # m — workspace center in Y
+  center_z:  0.3       # m — operating height (Z stays fixed during XY control)
+  width:     1.5       # m — extent in X direction
+  depth:     0.6       # m — extent in Y direction
+
+# ─── Hand tracker (hand_tracker_node.py) ──────────────────────────────────────
+hand_tracker:
+  show_window: false      # open OpenCV preview window (set false when subscribing externally)
+  roi:
+    x1: 0.15           # normalized image coordinates
+    y1: 0.05
+    x2: 0.85
+    y2: 0.95
+  smoothing:
+    alpha_xy:  0.85    # weight of new XY measurement [0=frozen, 1=no smoothing]
+    alpha_yaw: 0.75    # weight of new yaw measurement
+  safety:
+    max_jump:     0.15 # max allowed position jump between frames (image fraction)
+    lost_timeout: 0.5  # seconds before publishing hand-lost after last detection
+  gestures:
+    fist_threshold:  0.30  # avg fingertip-to-wrist distance (image fraction)
+    thumb_angle_min: 5.0   # degrees — gripper fully closed
+    thumb_angle_max: 38.0  # degrees — gripper fully open
+
+# ─── Hand tracking input (hand_tracking_input.py) ─────────────────────────────
+hand_tracking_input:
+  invert_x:      true  # mirror hand X motion (camera faces user)
+  invert_y:      false # flip hand Y motion
+  dead_zone:     0.05  # min hand displacement (image fraction) before tracking
+  yaw_scale:     2.0   # hand rotation [rad] → robot wrist rotation [rad]
+  yaw_dead_zone: 0.01  # min wrist delta before tracking [rad] (~1.1°)
+
+# ─── Controllers (dual_arm_teleop_node.py) ────────────────────────────────────
+controllers:
+  publish_rate:     50    # Hz — control loop frequency
+  boundary_margin:  0.03  # m  — safety margin before workspace edge
+
+  direct_velocity:
+    max_linear:  0.4   # m/s
+    max_angular: 0.8   # rad/s
+
+  p:
+    kp_linear:   5.0
+    kd_linear:   1.0
+    kp_angular:  5.0
+    kd_angular:  1.0
+    max_linear:  1.0
+    max_angular: 1.0
+
+  pd:
+    kp_linear:   5.0
+    kd_linear:   1.3
+    kp_angular:  2.5
+    kd_angular:  0.2
+    max_linear:  1.0
+    max_angular: 1.0
+
+  hand_tracking:
+    kp_linear:   3.0
+    kd_linear:   0.5
+    kp_angular:  3.0
+    kd_angular:  0.5
+    max_linear:  1.0
+    max_angular: 1.0
+
+  position:
+    position_threshold: 0.01  # m   — min XY change to trigger replan
+    angle_threshold:    0.05  # rad — min yaw change to trigger replan
+
+# ─── Visualization (workspace_visualizer_node.py, dual_arm_teleop_node.py) ────
+visualization:
+  publish_rate:           50     # Hz — workspace visualizer + EEF marker rate
+  target_arrow_length:    0.12   # m — length of wrist orientation arrow
+  target_sphere_scale:    0.06   # m — diameter of goal position sphere
+  arrow_shaft_diameter:   0.012  # m
+  arrow_head_diameter:    0.024  # m
+  eef_sphere_scale:       0.04   # m — diameter of live EEF sphere

@@ -3,8 +3,8 @@
 Gripper Driver Node
 ====================
 Subscribes to /left_gripper/command and /right_gripper/command (Float64,
-0.0=open 1.0=closed) and forwards each to its respective gripper controller
-as a JointTrajectory message.
+0.0=open 1.0=closed) and forwards each to its respective ForwardCommandController
+as a Float64MultiArray (direct position, no trajectory interpolation).
 
 Joint mapping (Robotiq 2F-85):
   left_robotiq_85_left_knuckle_joint  : 0.0 (open) → 0.7929 (closed)
@@ -13,13 +13,10 @@ Joint mapping (Robotiq 2F-85):
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float64
-from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
-from builtin_interfaces.msg import Duration
+from std_msgs.msg import Float64, Float64MultiArray
 
 
-KNUCKLE_CLOSED = 0.7929  # rad — default gripper_closed_position from macro
-MOVE_TIME      = 0.3    # seconds — 2 control periods at 100 Hz
+KNUCKLE_CLOSED = 0.7929  # rad — Robotiq 2F-85 fully closed
 
 
 class GripperNode(Node):
@@ -28,9 +25,9 @@ class GripperNode(Node):
         super().__init__('gripper_node')
 
         self._left_pub = self.create_publisher(
-            JointTrajectory, '/left_gripper_controller/joint_trajectory', 10)
+            Float64MultiArray, '/left_gripper_controller/commands', 10)
         self._right_pub = self.create_publisher(
-            JointTrajectory, '/right_gripper_controller/joint_trajectory', 10)
+            Float64MultiArray, '/right_gripper_controller/commands', 10)
 
         self.create_subscription(
             Float64, '/left_gripper/command', self._on_left_command, 10)
@@ -42,28 +39,15 @@ class GripperNode(Node):
 
     def _on_left_command(self, msg: Float64):
         knuckle_pos = KNUCKLE_CLOSED * max(0.0, min(1.0, msg.data))
-        self._publish(self._left_pub,
-                      ['left_robotiq_85_left_knuckle_joint'],
-                      [knuckle_pos])
+        out = Float64MultiArray()
+        out.data = [knuckle_pos]
+        self._left_pub.publish(out)
 
     def _on_right_command(self, msg: Float64):
         knuckle_pos = KNUCKLE_CLOSED * max(0.0, min(1.0, msg.data))
-        self._publish(self._right_pub,
-                      ['right_robotiq_85_left_knuckle_joint'],
-                      [knuckle_pos])
-
-    def _publish(self, pub, joints, positions):
-        traj = JointTrajectory()
-        traj.header.stamp = self.get_clock().now().to_msg()
-        traj.joint_names  = joints
-
-        pt = JointTrajectoryPoint()
-        pt.positions      = positions
-        pt.velocities     = [0.0] * len(positions)
-        pt.time_from_start = Duration(sec=0, nanosec=int(MOVE_TIME * 1e9))
-
-        traj.points = [pt]
-        pub.publish(traj)
+        out = Float64MultiArray()
+        out.data = [knuckle_pos]
+        self._right_pub.publish(out)
 
 
 def main(args=None):
