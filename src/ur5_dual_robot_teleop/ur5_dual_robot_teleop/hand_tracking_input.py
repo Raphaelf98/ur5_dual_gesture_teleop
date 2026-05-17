@@ -24,7 +24,10 @@ INVERT_X  = True   # mirror left/right
 INVERT_Y  = False  # flip up/down
 DEAD_ZONE = 0.02   # minimum hand displacement (fraction of image) before tracking
 
-YAW_SCALE     = 1.0   # radians of robot wrist rotation per unit of hand yaw delta
+# The hand tracker publishes yaw in normalized units [-1, 1] where 1 unit ≈ 55°.
+# Scaling to ~0.4 keeps yaw targets close to the current EEF yaw in radians,
+# preventing the PD controller from seeing large errors and saturating.
+YAW_SCALE     = 0.4
 YAW_DEAD_ZONE = 0.05  # minimum yaw delta before tracking
 
 
@@ -144,7 +147,7 @@ class HandTrackingInput:
 
         dx_world = dx_cam * (WORKSPACE.x_max - WORKSPACE.x_min)
         dy_world = dy_cam * (WORKSPACE.y_max - WORKSPACE.y_min)
-        dyaw_world = dyaw * YAW_SCALE
+        dyaw_world = -dyaw * YAW_SCALE
 
         if INVERT_X: dx_world = -dx_world
         if INVERT_Y: dy_world = -dy_world
@@ -187,6 +190,11 @@ class HandTrackingInput:
         """Returns right gripper position: 0.0 = closed, 1.0 = open."""
         with self._lock:
             return self._right_gripper
+
+    def get_left_gripper_command(self) -> float:
+        """Returns left gripper position: 0.0 = closed, 1.0 = open."""
+        with self._lock:
+            return self._left_gripper
 
     # ── ROS callbacks — right hand ────────────────────────────────────────────
 

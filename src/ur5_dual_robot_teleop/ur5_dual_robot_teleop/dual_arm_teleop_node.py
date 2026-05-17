@@ -47,12 +47,19 @@ CONTROLLERS = {
     'p': lambda: PDController(
         kp_linear=5.0, kd_linear=0.0,
         kp_angular=2.5, kd_angular=0.0,
-        max_linear=0.3, max_angular=0.5
+        max_linear=1.0, max_angular=1.0
     ),
     'pd': lambda: PDController(
         kp_linear=2.0, kd_linear=0.3,
         kp_angular=1.5, kd_angular=0.2,
         max_linear=0.4, max_angular=0.8
+    ),
+    # Hand tracking: high linear gains for responsive XY, low angular gains to
+    # prevent wrist overshoot (yaw target is in mixed units — see hand_tracking_input.py)
+    'hand_tracking': lambda: PDController(
+        kp_linear=5.0, kd_linear=0.0,
+        kp_angular=0.8, kd_angular=0.15,
+        max_linear=1.0, max_angular=0.4,
     ),
     'position': lambda: PositionController(
         position_threshold=0.01,
@@ -84,8 +91,10 @@ class TeleopNode(Node):
             TwistStamped, '/left_servo_node/delta_twist_cmds', 10)
         self.right_pub = self.create_publisher(
             TwistStamped, '/right_servo_node/delta_twist_cmds', 10)
-        self.gripper_pub = self.create_publisher(
-            Float64, '/gripper/command', 10)
+        self.left_gripper_pub = self.create_publisher(
+            Float64, '/left_gripper/command', 10)
+        self.right_gripper_pub = self.create_publisher(
+            Float64, '/right_gripper/command', 10)
         self._target_marker_pub = self.create_publisher(
             Marker, '/teleop/target_markers', 10)
 
@@ -113,11 +122,10 @@ class TeleopNode(Node):
         elif input_type == 'hand_tracking':
             from ur5_dual_robot_teleop.hand_tracking_input import HandTrackingInput
             self.input = HandTrackingInput(self)
-            # Hand tracking starts with P controller — switch to pd once tuned
-            self.left_controller  = self._make_controller('p')
-            self.right_controller = self._make_controller('p')
-            self.controller_name  = 'p'
-            self.get_logger().info('Hand tracking: using P controller (Kp=1.5, Kd=0)')
+            self.left_controller  = self._make_controller('hand_tracking')
+            self.right_controller = self._make_controller('hand_tracking')
+            self.controller_name  = 'hand_tracking'
+            self.get_logger().info('Hand tracking: using hand_tracking controller')
         else:
             self.get_logger().warn(f'Unknown input type "{input_type}", falling back to keyboard')
             from ur5_dual_robot_teleop.dual_arm_keyboard_node import KeyboardInput
@@ -265,9 +273,14 @@ class TeleopNode(Node):
             self._step_velocity_control(self.input.get_input(), dt)
 
         if hasattr(self.input, 'get_gripper_command'):
-            g = Float64()
-            g.data = self.input.get_gripper_command()
-            self.gripper_pub.publish(g)
+            rg = Float64()
+            rg.data = self.input.get_gripper_command()
+            self.right_gripper_pub.publish(rg)
+            lg = Float64()
+            lg.data = (self.input.get_left_gripper_command()
+                       if hasattr(self.input, 'get_left_gripper_command')
+                       else rg.data)
+            self.left_gripper_pub.publish(lg)
 
     def _step_position_control(self, left_offset: Pose2D, right_offset: Pose2D, dt: float):
         """

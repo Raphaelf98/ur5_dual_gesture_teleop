@@ -57,93 +57,24 @@
 
   <!-- ==================== GRIPPER MACRO ==================== -->
 
-  <xacro:macro name="simple_gripper" params="prefix parent">
+  <xacro:include filename="$(find robotiq_description)/urdf/robotiq_2f_85_macro.urdf.xacro"/>
+  <xacro:include filename="$(find robotiq_description)/urdf/2f_85.ros2_control.xacro"/>
+  <!-- ==================== ROBOTIQ GRIPPERS ==================== -->
 
-    <link name="${prefix}gripper_base">
-      <visual>
-        <origin xyz="0 0 0.02" rpy="0 0 0"/>
-        <geometry><cylinder radius="0.035" length="0.04"/></geometry>
-        <material name="dark_grey"><color rgba="0.2 0.2 0.2 1"/></material>
-      </visual>
-      <collision>
-        <origin xyz="0 0 0.02" rpy="0 0 0"/>
-        <geometry><cylinder radius="0.035" length="0.04"/></geometry>
-      </collision>
-      <inertial>
-        <mass value="0.3"/>
-        <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
-      </inertial>
-    </link>
+  <xacro:robotiq_gripper
+    name="left_robotiq_2f_85"
+    prefix="left_"
+    parent="left_tool0"
+    include_ros2_control="false">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </xacro:robotiq_gripper>
 
-    <joint name="${prefix}gripper_joint" type="fixed">
-      <parent link="${parent}"/>
-      <child link="${prefix}gripper_base"/>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-    </joint>
-
-    <link name="${prefix}finger_left">
-      <visual>
-        <origin xyz="0 0 0.02" rpy="0 0 0"/>
-        <geometry><box size="0.012 0.018 0.06"/></geometry>
-        <material name="dark_grey"><color rgba="0.2 0.2 0.2 1"/></material>
-      </visual>
-      <collision>
-        <origin xyz="0 0 0.02" rpy="0 0 0"/>
-        <geometry><box size="0.012 0.018 0.06"/></geometry>
-      </collision>
-      <inertial>
-        <mass value="0.05"/>
-        <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001"/>
-      </inertial>
-    </link>
-
-    <joint name="${prefix}finger_left_joint" type="prismatic">
-      <parent link="${prefix}gripper_base"/>
-      <child link="${prefix}finger_left"/>
-      <origin xyz="-0.025 0 0.04" rpy="0 0 0"/>
-      <axis xyz="1 0 0"/>
-      <limit lower="-0.025" upper="0.0" effort="50" velocity="0.1"/>
-      <dynamics damping="0.1" friction="0.1"/>
-    </joint>
-
-    <link name="${prefix}finger_right">
-      <visual>
-        <origin xyz="0 0 0.02" rpy="0 0 0"/>
-        <geometry><box size="0.012 0.018 0.06"/></geometry>
-        <material name="dark_grey"><color rgba="0.2 0.2 0.2 1"/></material>
-      </visual>
-      <collision>
-        <origin xyz="0 0 0.02" rpy="0 0 0"/>
-        <geometry><box size="0.012 0.018 0.06"/></geometry>
-      </collision>
-      <inertial>
-        <mass value="0.05"/>
-        <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001"/>
-      </inertial>
-    </link>
-
-    <joint name="${prefix}finger_right_joint" type="prismatic">
-      <parent link="${prefix}gripper_base"/>
-      <child link="${prefix}finger_right"/>
-      <origin xyz="0.025 0 0.04" rpy="0 0 0"/>
-      <axis xyz="1 0 0"/>
-      <limit lower="0.0" upper="0.025" effort="50" velocity="0.1"/>
-      <dynamics damping="0.1" friction="0.1"/>
-    </joint>
-
-    <!-- TCP (Tool Center Point) — planning target for IK -->
-    <link name="${prefix}tcp"/>
-    <joint name="${prefix}tcp_joint" type="fixed">
-      <parent link="${prefix}gripper_base"/>
-      <child link="${prefix}tcp"/>
-      <origin xyz="0 0 0.1" rpy="0 0 0"/>
-    </joint>
-
-  </xacro:macro>
-
-  <!-- ==================== ATTACH GRIPPERS ==================== -->
-
-  <xacro:simple_gripper prefix="left_" parent="left_tool0"/>
-  <xacro:simple_gripper prefix="right_" parent="right_tool0"/>
+  <xacro:robotiq_gripper
+    name="right_robotiq_2f_85"
+    prefix="right_"
+    parent="right_tool0"
+    include_ros2_control="false">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </xacro:robotiq_gripper>
 
 </robot>

@@ -2,14 +2,13 @@
 """
 Gripper Driver Node
 ====================
-Subscribes to /gripper/command (Float64, 0.0=closed 1.0=open) and
-forwards the command to both left and right gripper controllers as
-JointTrajectory messages.
+Subscribes to /left_gripper/command and /right_gripper/command (Float64,
+0.0=open 1.0=closed) and forwards each to its respective gripper controller
+as a JointTrajectory message.
 
-Joint mapping:
-  left_finger_left_joint  : 0.0 (closed) → -0.025 (open)
-  left_finger_right_joint : 0.0 (closed) →  0.025 (open)
-  (same pattern for right_)
+Joint mapping (Robotiq 2F-85):
+  left_robotiq_85_left_knuckle_joint  : 0.0 (open) → 0.7929 (closed)
+  right_robotiq_85_left_knuckle_joint : 0.0 (open) → 0.7929 (closed)
 """
 
 import rclpy
@@ -19,8 +18,8 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 
 
-FINGER_OPEN  = 0.025   # metres — max travel per finger
-MOVE_TIME    = 0.3     # seconds — trajectory duration
+KNUCKLE_CLOSED = 0.7929  # rad — default gripper_closed_position from macro
+MOVE_TIME      = 0.3    # seconds — 2 control periods at 100 Hz
 
 
 class GripperNode(Node):
@@ -33,22 +32,25 @@ class GripperNode(Node):
         self._right_pub = self.create_publisher(
             JointTrajectory, '/right_gripper_controller/joint_trajectory', 10)
 
-        self.create_subscription(Float64, '/gripper/command', self._on_command, 10)
+        self.create_subscription(
+            Float64, '/left_gripper/command', self._on_left_command, 10)
+        self.create_subscription(
+            Float64, '/right_gripper/command', self._on_right_command, 10)
 
-        self.get_logger().info('Gripper node ready — listening on /gripper/command')
+        self.get_logger().info(
+            'Gripper node ready — listening on /left_gripper/command and /right_gripper/command')
 
-    def _on_command(self, msg: Float64):
-        val = max(0.0, min(1.0, msg.data))
-
-        left_fl = -FINGER_OPEN * val   # finger_left moves negative to open
-        left_fr =  FINGER_OPEN * val   # finger_right moves positive to open
-
+    def _on_left_command(self, msg: Float64):
+        knuckle_pos = KNUCKLE_CLOSED * max(0.0, min(1.0, msg.data))
         self._publish(self._left_pub,
-                      ['left_finger_left_joint', 'left_finger_right_joint'],
-                      [left_fl, left_fr])
+                      ['left_robotiq_85_left_knuckle_joint'],
+                      [knuckle_pos])
+
+    def _on_right_command(self, msg: Float64):
+        knuckle_pos = KNUCKLE_CLOSED * max(0.0, min(1.0, msg.data))
         self._publish(self._right_pub,
-                      ['right_finger_left_joint', 'right_finger_right_joint'],
-                      [left_fl, left_fr])
+                      ['right_robotiq_85_left_knuckle_joint'],
+                      [knuckle_pos])
 
     def _publish(self, pub, joints, positions):
         traj = JointTrajectory()

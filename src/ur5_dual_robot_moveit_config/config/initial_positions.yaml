@@ -11,7 +11,5 @@ initial_positions:
   right_wrist_1_joint: -1.57
   right_wrist_2_joint: -1.57
   right_wrist_3_joint: 0.0
-  left_finger_left_joint: 0.0
-  left_finger_right_joint: 0.0
-  right_finger_left_joint: 0.0
-  right_finger_right_joint: 0.0
+  left_robotiq_85_left_knuckle_joint: 0.0
+  right_robotiq_85_left_knuckle_joint: 0.0
