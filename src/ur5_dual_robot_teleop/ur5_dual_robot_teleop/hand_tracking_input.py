@@ -182,7 +182,7 @@ class HandTrackingInput:
             self._left_ref_hand   = pose
             self._left_was_active = True
             self._left_prev_yaw   = pose.yaw
-            self._left_acc_dyaw   = 0.0
+            self._left_acc_dyaw   = 0
             return Pose2D()
 
         dx_cam = pose.x - self._left_ref_hand.x

@@ -320,10 +320,11 @@ class TeleopNode(Node):
                 lx, ly   = WORKSPACE.clamp(left_raw.x, left_raw.y)
                 self._left_ref_eef = Pose2D(x=lx, y=ly, yaw=left_raw.yaw)
             self._left_was_active = True
+            
             lx, ly = WORKSPACE.clamp(
                 self._left_ref_eef.x + left_offset.x,
                 self._left_ref_eef.y + left_offset.y)
-            left_target  = Pose2D(x=lx, y=ly, yaw=self._left_ref_eef.yaw + left_offset.yaw)
+            left_target  = Pose2D(x=lx, y=ly, yaw=self._left_ref_eef.yaw - left_offset.yaw)
             left_current = self._get_eef_pose(self.left_frame)
             left_vel     = self.left_controller.compute_velocity(left_current, left_target, dt)
             self.left_pub.publish(self._to_twist(left_vel, invert=True, swap_xy=True))
