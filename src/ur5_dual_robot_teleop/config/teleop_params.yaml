@@ -43,7 +43,7 @@ hand_tracking_input:
   # filter_mode: none   — raw measurements, no lag, most responsive
   #              ema    — exponential moving average, tune ema_alpha
   #              kalman — constant-velocity Kalman filter, tune kalman section
-  filter_mode: kalman # ema
+  filter_mode: ema
 
   # EMA — used when filter_mode: ema
   # ema_alpha: weight of new measurement [0=frozen, 1=pass-through]
@@ -55,10 +55,10 @@ hand_tracking_input:
   # sigma_r_pos — position measurement noise (image-frac). Lower → more responsive.
   # sigma_r_yaw — yaw measurement noise (rad).
   kalman:
-    sigma_a:     5.5
-    sigma_a_yaw: 20.9
-    sigma_r_pos: 0.0038
-    sigma_r_yaw: 0.0051
+    sigma_a:     20.0
+    sigma_a_yaw: 15.0
+    sigma_r_pos: 0.01
+    sigma_r_yaw: 0.05
 
 # ─── Controllers (dual_arm_teleop_node.py) ────────────────────────────────────
 controllers:
