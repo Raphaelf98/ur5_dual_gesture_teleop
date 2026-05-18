@@ -28,11 +28,10 @@ setup(
     },
     entry_points={
         'console_scripts': [
-        'dual_arm_teleop_node = ur5_dual_robot_teleop.dual_arm_teleop_node:main',
-        'keyboard_teleop_node = ur5_dual_robot_teleop.dual_arm_keyboard_node:main',
-        'hand_tracker_node = ur5_dual_robot_teleop.hand_tracker_node:main',
-        'workspace_visualizer = ur5_dual_robot_teleop.workspace_visualizer_node:main',
-        'gripper_node = ur5_dual_robot_teleop.gripper_node:main',
+            'dual_arm_teleop_node = ur5_dual_robot_teleop.dual_arm_teleop_node:main',
+            'hand_tracker_node = ur5_dual_robot_teleop.hand_tracker_node:main',
+            'workspace_visualizer = ur5_dual_robot_teleop.workspace_visualizer_node:main',
+            'gripper_node = ur5_dual_robot_teleop.gripper_node:main',
         ],
     },
 )

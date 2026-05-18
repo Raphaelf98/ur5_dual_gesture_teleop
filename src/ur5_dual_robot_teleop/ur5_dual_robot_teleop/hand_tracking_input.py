@@ -16,7 +16,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Bool, Float64
 
-from ur5_dual_robot_teleop.controllers.base_controller import Pose2D
+from ur5_dual_robot_teleop.utils import Pose2D
 from ur5_dual_robot_teleop.workspace import WORKSPACE
 from ur5_dual_robot_teleop.teleop_config import CONFIG
 
