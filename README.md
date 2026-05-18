@@ -260,3 +260,14 @@ A rectangular workspace is defined in the `world` frame by a centre point, width
 | `/left_servo_node/delta_twist_cmds` | `TwistStamped` | Cartesian velocity command to left arm |
 | `/teleop/target_markers` | `MarkerArray` | RViz markers showing target EEF positions |
 | `/workspace/markers` | `MarkerArray` | RViz workspace boundary visualization |
+
+---
+
+## External Dependencies
+
+| Dependency | Source | Notes |
+|---|---|---|
+| **ros2_robotiq_gripper** | [github.com/PickNikRobotics/ros2_robotiq_gripper](https://github.com/PickNikRobotics/ros2_robotiq_gripper) | ROS 2 driver and description for the Robotiq 2F-85 gripper |
+| **Universal Robots ROS2 Driver** | [github.com/UniversalRobots/Universal_Robots_ROS2_Description](https://github.com/UniversalRobots/Universal_Robots_ROS2_Description) | Official UR URDF macros (`ur_description`) used by the robot description package |
+| **MoveIt 2** | [github.com/moveit/moveit2](https://github.com/moveit/moveit2) | Motion planning framework; MoveIt Servo is used for real-time Cartesian control |
+| **MediaPipe** | [github.com/google-ai-edge/mediapipe](https://github.com/google-ai-edge/mediapipe) | Hand landmark detection (`pip install mediapipe`) |
