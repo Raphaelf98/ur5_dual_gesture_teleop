@@ -11,17 +11,18 @@ workspace:
 hand_tracker:
   show_window: false      # open OpenCV preview window (set false when subscribing externally)
   fps_cap:          20    # max inference fps — lower = less CPU (15-20 is plenty for teleop)
-  model_complexity: 0     # MediaPipe model: 0=lite (fast), 1=full (accurate)
+  model_complexity: 1     # MediaPipe model: 0=lite (fast), 1=full (accurate)
   cam_width:        640   # camera capture width — lower = faster inference
   cam_height:       480   # camera capture height
+  show_roi: false      # draw green ROI rectangle on the camera preview
   roi:
     x1: 0.15           # normalized image coordinates
     y1: 0.05
     x2: 0.85
     y2: 0.95
   smoothing:
-    alpha_xy:  0.85    # weight of new XY measurement [0=frozen, 1=no smoothing]
-    alpha_yaw: 0.75    # weight of new yaw measurement
+    alpha_xy:  0.7    # weight of new XY measurement [0=frozen, 1=no smoothing]
+    alpha_yaw: 0.7    # weight of new yaw measurement
   safety:
     max_jump:     0.15 # max allowed position jump between frames (image fraction)
     lost_timeout: 0.5  # seconds before publishing hand-lost after last detection
@@ -47,7 +48,7 @@ controllers:
     kp_linear:   2.0
     kd_linear:   0.1
     kp_angular:  2.0
-    kd_angular:  0.0
+    kd_angular:  0.1
     max_linear:  1.0
     max_angular: 1.0
 

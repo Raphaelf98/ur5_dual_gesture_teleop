@@ -61,6 +61,7 @@ FIST_THRESHOLD    = _ges['fist_threshold']
 THUMB_ANGLE_MIN   = _ges['thumb_angle_min']
 THUMB_ANGLE_MAX   = _ges['thumb_angle_max']
 SHOW_WINDOW       = _ht['show_window']
+SHOW_ROI          = _ht.get('show_roi', True)
 FPS_CAP           = _ht.get('fps_cap', 20)
 MODEL_COMPLEXITY  = _ht.get('model_complexity', 0)
 CAM_WIDTH         = _ht.get('cam_width', 640)
@@ -246,7 +247,8 @@ class HandTrackerNode(Node):
 
                 want_image = self._want_image
                 if want_image:
-                    self._draw_roi(frame, w, h)
+                    if SHOW_ROI:
+                        self._draw_roi(frame, w, h)
 
                 right_hand = left_hand = None
                 if results.multi_hand_landmarks and results.multi_handedness:
