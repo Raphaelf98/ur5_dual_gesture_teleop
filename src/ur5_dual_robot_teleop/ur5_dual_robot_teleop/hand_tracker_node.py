@@ -124,6 +124,9 @@ class HandTrackerNode(Node):
         # ── Thread-safe snapshot queue (size 1 = always latest frame) ─────
         self._pub_queue: queue.Queue = queue.Queue(maxsize=1)
 
+        # Updated by the ROS thread; read by the camera thread to skip drawing.
+        self._want_image: bool = False
+
         # ── Publish timer — runs on the ROS2 executor thread ──────────────
         self.create_timer(0.016, self._publish_from_queue)   # ~60 Hz drain
 
@@ -140,6 +143,9 @@ class HandTrackerNode(Node):
     # ─── Publish timer callback (executor thread) ─────────────────────────────
 
     def _publish_from_queue(self):
+        self._want_image = (
+            SHOW_WINDOW or self._image_pub.get_subscription_count() > 0
+        )
         try:
             snap = self._pub_queue.get_nowait()
         except queue.Empty:
@@ -203,10 +209,14 @@ class HandTrackerNode(Node):
             return
 
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # always grab the latest frame
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  CAM_WIDTH)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
 
         w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        self.get_logger().info(f'Camera: {w}x{h}')
+        self.get_logger().info(f'Camera: {w}x{h} @ {FPS_CAP} fps cap | model_complexity={MODEL_COMPLEXITY}')
+
+        _frame_interval = 1.0 / FPS_CAP
 
         # Per-hand tracking state (all plain Python — no ROS)
         smooth_x   = smooth_y   = 0.5; smooth_yaw   = 0.0
@@ -218,11 +228,14 @@ class HandTrackerNode(Node):
 
         with mp.solutions.hands.Hands(
             max_num_hands=2,
+            model_complexity=MODEL_COMPLEXITY,
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5,
         ) as hands:
 
             while rclpy.ok():
+                _t0 = time.monotonic()
+
                 ret, frame = cap.read()
                 if not ret:
                     break
@@ -231,7 +244,9 @@ class HandTrackerNode(Node):
                 rgb     = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 results = hands.process(rgb)
 
-                self._draw_roi(frame, w, h)
+                want_image = self._want_image
+                if want_image:
+                    self._draw_roi(frame, w, h)
 
                 right_hand = left_hand = None
                 if results.multi_hand_landmarks and results.multi_handedness:
@@ -254,7 +269,8 @@ class HandTrackerNode(Node):
                     x, y = lms[0].x, lms[0].y
                     in_roi  = self._in_roi(x, y)
                     jump_ok = self._jump_ok(x, y, prev_x, prev_y)
-                    self._draw_landmarks(frame, right_hand, w, h)
+                    if want_image:
+                        self._draw_landmarks(frame, right_hand, w, h)
                     if in_roi and jump_ok:
                         prev_x = x; prev_y = y
                         last_seen  = time.monotonic()
@@ -265,7 +281,8 @@ class HandTrackerNode(Node):
                         smooth_x   = SMOOTH_ALPHA * x + (1 - SMOOTH_ALPHA) * smooth_x
                         smooth_y   = SMOOTH_ALPHA * y + (1 - SMOOTH_ALPHA) * smooth_y
                         smooth_yaw = SMOOTH_ALPHA_YAW * yaw_rad + (1 - SMOOTH_ALPHA_YAW) * smooth_yaw
-                        self._draw_smoothed(frame, w, h, smooth_x, smooth_y, smooth_yaw, C_SMOOTHED_R)
+                        if want_image:
+                            self._draw_smoothed(frame, w, h, smooth_x, smooth_y, smooth_yaw, C_SMOOTHED_R)
                         snap.rx = smooth_x; snap.ry = smooth_y; snap.ryaw = smooth_yaw
                         snap.r_active = fist; snap.r_gripper = gripper
                     elif not in_roi:
@@ -288,7 +305,8 @@ class HandTrackerNode(Node):
                     x, y = lms[0].x, lms[0].y
                     in_roi  = self._in_roi(x, y)
                     jump_ok = self._jump_ok(x, y, prev_x_L, prev_y_L)
-                    self._draw_landmarks(frame, left_hand, w, h)
+                    if want_image:
+                        self._draw_landmarks(frame, left_hand, w, h)
                     if in_roi and jump_ok:
                         prev_x_L = x; prev_y_L = y
                         last_seen_L = time.monotonic()
@@ -299,7 +317,8 @@ class HandTrackerNode(Node):
                         smooth_x_L   = SMOOTH_ALPHA * x + (1 - SMOOTH_ALPHA) * smooth_x_L
                         smooth_y_L   = SMOOTH_ALPHA * y + (1 - SMOOTH_ALPHA) * smooth_y_L
                         smooth_yaw_L = SMOOTH_ALPHA_YAW * yaw_rad + (1 - SMOOTH_ALPHA_YAW) * smooth_yaw_L
-                        self._draw_smoothed(frame, w, h, smooth_x_L, smooth_y_L, smooth_yaw_L, C_SMOOTHED_L)
+                        if want_image:
+                            self._draw_smoothed(frame, w, h, smooth_x_L, smooth_y_L, smooth_yaw_L, C_SMOOTHED_L)
                         snap.lx = smooth_x_L; snap.ly = smooth_y_L; snap.lyaw = smooth_yaw_L
                         snap.l_active = fist_L; snap.l_gripper = gripper_L
                     elif not in_roi:
@@ -314,9 +333,10 @@ class HandTrackerNode(Node):
                         snap.lx = smooth_x_L; snap.ly = smooth_y_L; snap.lyaw = smooth_yaw_L
                         snap.l_active = fist_L; snap.l_gripper = gripper_L
 
-                self._draw_info_bar(frame, w, h, fist, fist_L, gripper, gripper_L)
-                self._draw_status(frame, w, h, r_detected, l_detected, warning)
-                snap.frame = frame
+                if want_image:
+                    self._draw_info_bar(frame, w, h, fist, fist_L, gripper, gripper_L)
+                    self._draw_status(frame, w, h, r_detected, l_detected, warning)
+                    snap.frame = frame
 
                 self._enqueue(snap)
 
@@ -324,8 +344,10 @@ class HandTrackerNode(Node):
                     cv2.imshow('Hand Tracker', frame)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
-                else:
-                    cv2.waitKey(1)
+
+                elapsed = time.monotonic() - _t0
+                if elapsed < _frame_interval:
+                    time.sleep(_frame_interval - elapsed)
 
         cap.release()
         if SHOW_WINDOW:
