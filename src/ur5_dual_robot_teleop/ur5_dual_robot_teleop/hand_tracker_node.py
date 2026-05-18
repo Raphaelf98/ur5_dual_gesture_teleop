@@ -51,16 +51,20 @@ _smo = _ht['smoothing']
 _saf = _ht['safety']
 _ges = _ht['gestures']
 
-ROI_X1, ROI_Y1  = _roi['x1'], _roi['y1']
-ROI_X2, ROI_Y2  = _roi['x2'], _roi['y2']
-MAX_JUMP         = _saf['max_jump']
-SMOOTH_ALPHA     = _smo['alpha_xy']
-SMOOTH_ALPHA_YAW = _smo['alpha_yaw']
-LOST_TIMEOUT     = _saf['lost_timeout']
-FIST_THRESHOLD   = _ges['fist_threshold']
-THUMB_ANGLE_MIN  = _ges['thumb_angle_min']
-THUMB_ANGLE_MAX  = _ges['thumb_angle_max']
-SHOW_WINDOW      = _ht['show_window']
+ROI_X1, ROI_Y1   = _roi['x1'], _roi['y1']
+ROI_X2, ROI_Y2   = _roi['x2'], _roi['y2']
+MAX_JUMP          = _saf['max_jump']
+SMOOTH_ALPHA      = _smo['alpha_xy']
+SMOOTH_ALPHA_YAW  = _smo['alpha_yaw']
+LOST_TIMEOUT      = _saf['lost_timeout']
+FIST_THRESHOLD    = _ges['fist_threshold']
+THUMB_ANGLE_MIN   = _ges['thumb_angle_min']
+THUMB_ANGLE_MAX   = _ges['thumb_angle_max']
+SHOW_WINDOW       = _ht['show_window']
+FPS_CAP           = _ht.get('fps_cap', 20)
+MODEL_COMPLEXITY  = _ht.get('model_complexity', 0)
+CAM_WIDTH         = _ht.get('cam_width', 640)
+CAM_HEIGHT        = _ht.get('cam_height', 480)
 
 # ─── Colors (BGR) ─────────────────────────────────────────────────────────────
 C_ROI        = (0, 255, 0)

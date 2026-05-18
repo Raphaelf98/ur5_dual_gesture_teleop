@@ -1,15 +1,19 @@
 # ─── Workspace ────────────────────────────────────────────────────────────────
 workspace:
   frame_id: world
-  center_x: -0.1       # m — workspace center in X
+  center_x:  -0.05      # m — workspace center in X
   center_y:  0.5       # m — workspace center in Y
-  center_z:  0.3       # m — operating height (Z stays fixed during XY control)
-  width:     1.5       # m — extent in X direction
-  depth:     0.6       # m — extent in Y direction
+  center_z:  0.2       # m — operating height (Z stays fixed during XY control)
+  width:     1.4       # m — extent in X direction
+  depth:     0.5       # m — extent in Y direction
 
 # ─── Hand tracker (hand_tracker_node.py) ──────────────────────────────────────
 hand_tracker:
   show_window: false      # open OpenCV preview window (set false when subscribing externally)
+  fps_cap:          20    # max inference fps — lower = less CPU (15-20 is plenty for teleop)
+  model_complexity: 0     # MediaPipe model: 0=lite (fast), 1=full (accurate)
+  cam_width:        640   # camera capture width — lower = faster inference
+  cam_height:       480   # camera capture height
   roi:
     x1: 0.15           # normalized image coordinates
     y1: 0.05
@@ -36,20 +40,20 @@ hand_tracking_input:
 
 # ─── Controllers (dual_arm_teleop_node.py) ────────────────────────────────────
 controllers:
-  publish_rate:     50    # Hz — control loop frequency
+  publish_rate:     100    # Hz — control loop frequency
   boundary_margin:  0.03  # m  — safety margin before workspace edge
 
   hand_tracking:
-    kp_linear:   3.0
-    kd_linear:   0.5
-    kp_angular:  3.0
-    kd_angular:  0.5
+    kp_linear:   2.0
+    kd_linear:   0.1
+    kp_angular:  2.0
+    kd_angular:  0.0
     max_linear:  1.0
     max_angular: 1.0
 
 # ─── Visualization (workspace_visualizer_node.py, dual_arm_teleop_node.py) ────
 visualization:
-  publish_rate:           50     # Hz — workspace visualizer + EEF marker rate
+  publish_rate:           100     # Hz — workspace visualizer + EEF marker rate
   target_arrow_length:    0.12   # m — length of wrist orientation arrow
   target_sphere_scale:    0.06   # m — diameter of goal position sphere
   arrow_shaft_diameter:   0.012  # m

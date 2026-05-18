@@ -55,17 +55,23 @@ def make_twist(
     stamp,
     invert: bool,
     swap_xy: bool,
+    invert_angular: bool = False,
 ) -> TwistStamped:
-    """Pack a Twist2D into a stamped ROS message, applying axis swap and sign inversion."""
-    sign = -1.0 if invert else 1.0
+    """Pack a Twist2D into a stamped ROS message, applying axis swap and sign inversion.
+
+    invert         — negate linear X/Y (for mirrored workspace)
+    invert_angular — negate angular Z independently of invert
+    """
+    linear_sign  = -1.0 if invert         else 1.0
+    angular_sign = -1.0 if invert_angular else 1.0
     vx, vy = (-vel.vy, vel.vx) if swap_xy else (vel.vx, vel.vy)
     msg = TwistStamped()
     msg.header.stamp    = stamp
     msg.header.frame_id = world_frame
-    msg.twist.linear.x  = float(sign * vx)
-    msg.twist.linear.y  = float(sign * vy)
+    msg.twist.linear.x  = float(linear_sign * vx)
+    msg.twist.linear.y  = float(linear_sign * vy)
     msg.twist.linear.z  = 0.0
-    msg.twist.angular.z = float(sign * vel.wz)
+    msg.twist.angular.z = float(angular_sign * vel.wz)
     return msg
 
 

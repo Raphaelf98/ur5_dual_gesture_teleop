@@ -158,7 +158,7 @@ class TeleopNode(Node):
             left_target  = Pose2D(x=lx, y=ly, yaw=self._left_ref_eef.yaw - left_offset.yaw)
             left_vel     = self.left_controller.compute_velocity(left_current, left_target, dt)
             self.left_pub.publish(
-                make_twist(left_vel, self.world_frame, stamp, invert=True, swap_xy=True))
+                make_twist(left_vel, self.world_frame, stamp, invert=True, swap_xy=True, invert_angular=False))
 
         # ── Right arm ─────────────────────────────────────────────────────
         if not self.input.right_active:
