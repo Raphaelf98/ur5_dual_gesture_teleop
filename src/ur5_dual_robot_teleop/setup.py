@@ -32,6 +32,7 @@ setup(
             'hand_tracker_node = ur5_dual_robot_teleop.hand_tracker_node:main',
             'workspace_visualizer = ur5_dual_robot_teleop.workspace_visualizer_node:main',
             'gripper_node = ur5_dual_robot_teleop.gripper_node:main',
+            'kf_tuner = ur5_dual_robot_teleop.kf_tuner:main',
         ],
     },
 )

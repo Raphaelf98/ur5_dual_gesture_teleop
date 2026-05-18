@@ -34,16 +34,16 @@ hand_tracker:
 hand_tracking_input:
   invert_x:      true  # mirror hand X motion (camera faces user)
   invert_y:      false # flip hand Y motion
-  dead_zone:       0.05  # min hand displacement (image fraction) before tracking
+  dead_zone:       0.08  # min hand displacement (image fraction) before tracking
   yaw_scale:       2.0   # hand rotation [rad] → robot wrist rotation [rad]
-  yaw_dead_zone:   0.01  # min wrist delta before tracking [rad] (~1.1°)
+  yaw_dead_zone:   0.03  # min wrist delta before tracking [rad] (~1.1°)
   active_hold_sec: 0.15  # seconds to hold active after fist opens (prevents dropout)
 
   # ── Input smoothing ───────────────────────────────────────────────────────────
   # filter_mode: none   — raw measurements, no lag, most responsive
   #              ema    — exponential moving average, tune ema_alpha
   #              kalman — constant-velocity Kalman filter, tune kalman section
-  filter_mode: ema
+  filter_mode: kalman # ema
 
   # EMA — used when filter_mode: ema
   # ema_alpha: weight of new measurement [0=frozen, 1=pass-through]
@@ -55,10 +55,10 @@ hand_tracking_input:
   # sigma_r_pos — position measurement noise (image-frac). Lower → more responsive.
   # sigma_r_yaw — yaw measurement noise (rad).
   kalman:
-    sigma_a:     20.0
-    sigma_a_yaw: 15.0
-    sigma_r_pos: 0.01
-    sigma_r_yaw: 0.05
+    sigma_a:     5.5
+    sigma_a_yaw: 20.9
+    sigma_r_pos: 0.0038
+    sigma_r_yaw: 0.0051
 
 # ─── Controllers (dual_arm_teleop_node.py) ────────────────────────────────────
 controllers:
@@ -67,9 +67,9 @@ controllers:
 
   hand_tracking:
     kp_linear:   6.0
-    kd_linear:   0.0
+    kd_linear:   0.1
     kp_angular:  2.0
-    kd_angular:  0.0
+    kd_angular:  0.1
     max_linear:  1.0
     max_angular: 1.0
 
