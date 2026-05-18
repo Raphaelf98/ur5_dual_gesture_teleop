@@ -11,7 +11,7 @@ workspace:
 hand_tracker:
   show_window: false      # open OpenCV preview window (set false when subscribing externally)
   fps_cap:          20    # max inference fps — lower = less CPU (15-20 is plenty for teleop)
-  model_complexity: 0     # MediaPipe model: 0=lite (fast), 1=full (accurate)
+  model_complexity: 1     # MediaPipe model: 0=lite (fast), 1=full (accurate)
   cam_width:        640   # camera capture width — lower = faster inference
   cam_height:       480   # camera capture height
   roi:
@@ -20,8 +20,8 @@ hand_tracker:
     x2: 0.85
     y2: 0.95
   smoothing:
-    alpha_xy:  0.85    # weight of new XY measurement [0=frozen, 1=no smoothing]
-    alpha_yaw: 0.75    # weight of new yaw measurement
+    alpha_xy:  1.0     # pass-through — smoothing is handled by hand_tracking_input filter_mode
+    alpha_yaw: 1.0
   safety:
     max_jump:     0.15 # max allowed position jump between frames (image fraction)
     lost_timeout: 0.5  # seconds before publishing hand-lost after last detection
@@ -34,9 +34,31 @@ hand_tracker:
 hand_tracking_input:
   invert_x:      true  # mirror hand X motion (camera faces user)
   invert_y:      false # flip hand Y motion
-  dead_zone:     0.05  # min hand displacement (image fraction) before tracking
-  yaw_scale:     2.0   # hand rotation [rad] → robot wrist rotation [rad]
-  yaw_dead_zone: 0.01  # min wrist delta before tracking [rad] (~1.1°)
+  dead_zone:       0.05  # min hand displacement (image fraction) before tracking
+  yaw_scale:       2.0   # hand rotation [rad] → robot wrist rotation [rad]
+  yaw_dead_zone:   0.01  # min wrist delta before tracking [rad] (~1.1°)
+  active_hold_sec: 0.15  # seconds to hold active after fist opens (prevents dropout)
+
+  # ── Input smoothing ───────────────────────────────────────────────────────────
+  # filter_mode: none   — raw measurements, no lag, most responsive
+  #              ema    — exponential moving average, tune ema_alpha
+  #              kalman — constant-velocity Kalman filter, tune kalman section
+  filter_mode: ema
+
+  # EMA — used when filter_mode: ema
+  # ema_alpha: weight of new measurement [0=frozen, 1=pass-through]
+  ema_alpha: 0.7
+
+  # Kalman — used when filter_mode: kalman
+  # sigma_a     — hand acceleration noise (image-frac/s²). Higher → more responsive.
+  # sigma_a_yaw — same for yaw (rad/s²).
+  # sigma_r_pos — position measurement noise (image-frac). Lower → more responsive.
+  # sigma_r_yaw — yaw measurement noise (rad).
+  kalman:
+    sigma_a:     20.0
+    sigma_a_yaw: 15.0
+    sigma_r_pos: 0.01
+    sigma_r_yaw: 0.05
 
 # ─── Controllers (dual_arm_teleop_node.py) ────────────────────────────────────
 controllers:
@@ -44,8 +66,8 @@ controllers:
   boundary_margin:  0.03  # m  — safety margin before workspace edge
 
   hand_tracking:
-    kp_linear:   2.0
-    kd_linear:   0.1
+    kp_linear:   6.0
+    kd_linear:   0.0
     kp_angular:  2.0
     kd_angular:  0.0
     max_linear:  1.0
