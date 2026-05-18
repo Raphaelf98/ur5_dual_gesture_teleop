@@ -34,3 +34,5 @@ CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 Makefile
+ 
+*.mp4
